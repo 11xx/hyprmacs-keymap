@@ -1,11 +1,10 @@
 # hyprmacs-keymap
 
-Emacs-like, modifier-aware key chords for **Hyprland 0.55+**, as a native C++
-plugin.
+Emacs-like keymap helper for **Hyprland 0.55+**.
 
-Define multi-step key sequences (`s-x` then `e` then `e`) and exact
-modifier-aware chords. The plugin runs a single deterministic chord state
-machine directly on Hyprland key events — no submaps, no settling timers.
+Define multi-step key sequences (`s-x` then `e` then `e`) and chords with
+modifiers, and they fire eagerly the moment the sequence is complete — like
+Emacs.
 
 ```lua
 keymap_exec("s-x space", "wofi --show drun")   -- press s-x, then space
@@ -104,7 +103,7 @@ A sequence is space-separated chords; within a chord, modifiers precede the key.
   modifiers are an unordered set, as in Emacs. Internally a chord is
   `(modifier bitmask, key)`, so there's no canonical-order requirement. (The old
   Lua helper had to sort modifiers into a canonical `C M s S` order for
-  Hyprland's string-based bind matching; the native engine doesn't.)
+  Hyprland's string-based bind matching; this plugin doesn't.)
 * Held modifiers are **not** carried into later chords: `s-x space` and
   `s-x s-space` are different bindings.
 
@@ -211,4 +210,4 @@ make test   # builds & runs tests/sim.cpp (needs only xkbcommon)
 
 ## License
 
-Public domain — see [`UNLICENSE`](UNLICENSE).
+See [`UNLICENSE`](UNLICENSE).

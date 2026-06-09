@@ -416,13 +416,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     }
     if (!addr) {
         HyprlandAPI::addNotification(handle, "[hyprmacs-keymap] could not find onKeyEvent to hook; chords disabled", CHyprColor(0.9f, 0.2f, 0.2f, 1.0f), 10000);
-        return {"hyprmacs-keymap", "Emacs-like key chords (FAILED to hook)", "11xx", "1.6"};
+        return {"hyprmacs-keymap", "Emacs-like keymap helper (FAILED to hook)", "11xx", "2026.6.9"};
     }
 
     g_keyHook = HyprlandAPI::createFunctionHook(handle, addr, rc<void*>(&hkOnKeyEvent));
     if (!g_keyHook || !g_keyHook->hook()) {
         HyprlandAPI::addNotification(handle, "[hyprmacs-keymap] failed to install onKeyEvent hook; chords disabled", CHyprColor(0.9f, 0.2f, 0.2f, 1.0f), 10000);
-        return {"hyprmacs-keymap", "Emacs-like key chords (FAILED to hook)", "11xx", "1.6"};
+        return {"hyprmacs-keymap", "Emacs-like keymap helper (FAILED to hook)", "11xx", "2026.6.9"};
     }
 
     HyprlandAPI::addLuaFunction(handle, "hyprmacs_keymap", "register", &hm_register);
@@ -430,7 +430,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addLuaFunction(handle, "hyprmacs_keymap", "clear", &hm_clear);
 
     logmsg("loaded; hl.plugin.hyprmacs_keymap.{register,configure,clear} available");
-    return {"hyprmacs-keymap", "Emacs-like, modifier-aware key chords for Hyprland", "11xx", "1.6"};
+    return {"hyprmacs-keymap", "Emacs-like keymap helper Hyprland plugin", "11xx", "2026.6.9"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {

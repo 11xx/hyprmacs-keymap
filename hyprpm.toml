@@ -5,7 +5,7 @@ authors = ["11xx"]
 
 # Plugin name. This is what `hyprpm list`/`hyprpm enable` use.
 [hyprmacs-keymap]
-description = "Emacs-like, modifier-aware key chords for Hyprland"
+description = "Emacs-like keymap helper Hyprland plugin"
 authors = ["11xx"]
 output = "hyprmacs-keymap.so"
 build = [
