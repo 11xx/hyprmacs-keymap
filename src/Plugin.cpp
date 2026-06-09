@@ -27,6 +27,7 @@
 #include <lua.hpp>
 
 #include <chrono>
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -60,8 +61,34 @@ struct Config {
 
 SP<CEventLoopTimer> g_timer;
 
+// Hyprland's stderr is usually the console (e.g. /dev/tty1), invisible from the
+// session and absent from hyprland.log/rollinglog. So mirror our messages to a
+// file we (and the user) can actually read.
+constexpr const char* LOGFILE = "/tmp/hyprmacs-keymap.log";
+
+void logfile(const std::string& s) {
+    if (FILE* f = std::fopen(LOGFILE, "a")) {
+        std::fputs(s.c_str(), f);
+        std::fputc('\n', f);
+        std::fclose(f);
+    }
+}
+
 void logmsg(const std::string& s) {
     std::fprintf(stderr, "[hyprmacs-keymap] %s\n", s.c_str());
+    logfile("[hyprmacs-keymap] " + s);
+}
+
+// printf-style; only emits when debug is enabled.
+void dbg(const char* fmt, ...) {
+    if (!g_cfg.debug)
+        return;
+    char    buf[256];
+    va_list ap;
+    va_start(ap, fmt);
+    std::vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    logfile(buf);
 }
 
 // ---------------------------------------------------------------------------
@@ -145,8 +172,8 @@ bool hkOnKeyEvent(void* thisptr, std::any event, SP<IKeyboard> keyboard) {
         char name[64] = {0};
         if (sym)
             xkb_keysym_get_name(static_cast<xkb_keysym_t>(sym), name, sizeof(name));
-        std::fprintf(stderr, "[hyprmacs-keymap] %s sym=%s(0x%x) mods=0x%x suppress=%d commits=%zu\n", pressed ? "down" : "up  ", sym ? name : "-", static_cast<unsigned>(sym),
-                     static_cast<unsigned>(mods), static_cast<int>(r.suppress), r.commits.size());
+        dbg("%s sym=%s(0x%x) mods=0x%x suppress=%d commits=%zu", pressed ? "down" : "up  ", sym ? name : "-", static_cast<unsigned>(sym), static_cast<unsigned>(mods),
+            static_cast<int>(r.suppress), r.commits.size());
     }
 
     for (ActionId a : r.commits)
@@ -225,6 +252,16 @@ int hm_register(lua_State* L) {
             luaL_unref(L, LUA_REGISTRYINDEX, ref);
             return luaL_error(L, "hyprmacs-keymap.register: empty key sequence");
     }
+
+    if (g_cfg.debug) {
+        std::string chords;
+        for (const auto& c : parsed.chords) {
+            char b[40];
+            std::snprintf(b, sizeof(b), "%s{mods=0x%x,sym=0x%x}", chords.empty() ? "" : " ", static_cast<unsigned>(c.mods), static_cast<unsigned>(c.sym));
+            chords += b;
+        }
+        dbg("register '%s' -> [%s] status=%d", seq.c_str(), chords.c_str(), static_cast<int>(status));
+    }
     return 0;
 }
 
@@ -252,6 +289,9 @@ int hm_configure(lua_State* L) {
     if (lua_isboolean(L, -1))
         g_cfg.debug = lua_toboolean(L, -1);
     lua_pop(L, 1);
+
+    if (g_cfg.debug)
+        dbg("configure: debug on (timeout=%d strict=%d report=%d)", g_cfg.timeoutMs, static_cast<int>(g_cfg.strictDuplicates), static_cast<int>(g_cfg.reportDuplicates));
 
     // modified_leaf_commit_delay_ms is accepted for backward compatibility but
     // ignored: matching is eager now (a final binding fires on key-down).
@@ -291,13 +331,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     }
     if (!addr) {
         HyprlandAPI::addNotification(handle, "[hyprmacs-keymap] could not find onKeyEvent to hook; chords disabled", CHyprColor(0.9f, 0.2f, 0.2f, 1.0f), 10000);
-        return {"hyprmacs-keymap", "Emacs-like key chords (FAILED to hook)", "11xx", "1.2"};
+        return {"hyprmacs-keymap", "Emacs-like key chords (FAILED to hook)", "11xx", "1.3"};
     }
 
     g_keyHook = HyprlandAPI::createFunctionHook(handle, addr, rc<void*>(&hkOnKeyEvent));
     if (!g_keyHook || !g_keyHook->hook()) {
         HyprlandAPI::addNotification(handle, "[hyprmacs-keymap] failed to install onKeyEvent hook; chords disabled", CHyprColor(0.9f, 0.2f, 0.2f, 1.0f), 10000);
-        return {"hyprmacs-keymap", "Emacs-like key chords (FAILED to hook)", "11xx", "1.2"};
+        return {"hyprmacs-keymap", "Emacs-like key chords (FAILED to hook)", "11xx", "1.3"};
     }
 
     HyprlandAPI::addLuaFunction(handle, "hyprmacs_keymap", "register", &hm_register);
@@ -305,7 +345,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addLuaFunction(handle, "hyprmacs_keymap", "clear", &hm_clear);
 
     logmsg("loaded; hl.plugin.hyprmacs_keymap.{register,configure,clear} available");
-    return {"hyprmacs-keymap", "Emacs-like, modifier-aware key chords for Hyprland", "11xx", "1.2"};
+    return {"hyprmacs-keymap", "Emacs-like, modifier-aware key chords for Hyprland", "11xx", "1.3"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
