@@ -26,6 +26,8 @@
 
 #include <lua.hpp>
 
+#include <sys/stat.h>
+
 #include <chrono>
 #include <cstdarg>
 #include <cstdint>
@@ -60,6 +62,7 @@ struct Config {
 } g_cfg;
 
 SP<CEventLoopTimer> g_timer;
+SP<CEventLoopTimer> g_debugWarnTimer;
 
 // Hyprland's stderr is usually the console (e.g. /dev/tty1), invisible from the
 // session and absent from hyprland.log/rollinglog. So mirror our messages to a
@@ -71,6 +74,7 @@ void logfile(const std::string& s) {
         std::fputs(s.c_str(), f);
         std::fputc('\n', f);
         std::fclose(f);
+        ::chmod(LOGFILE, S_IRUSR | S_IWUSR); // owner-only; /tmp is world-readable
     }
 }
 
@@ -140,6 +144,38 @@ void manageTimeout() {
 }
 
 // ---------------------------------------------------------------------------
+// loud, recurring reminder that debug key-logging is on
+// ---------------------------------------------------------------------------
+void stopDebugWarning() {
+    if (g_debugWarnTimer && g_pEventLoopManager) {
+        g_pEventLoopManager->removeTimer(g_debugWarnTimer);
+        g_debugWarnTimer.reset();
+    }
+}
+
+void showDebugWarning() {
+    HyprlandAPI::addNotification(PHANDLE,
+                                 "[hyprmacs-keymap] DEBUG KEY LOGGING IS ON — chord keys are written to " + std::string(LOGFILE) + ". Set debug=false (or remove it) and reload.",
+                                 CHyprColor(0.9f, 0.1f, 0.1f, 1.0f), 10000);
+}
+
+void armDebugWarning() {
+    stopDebugWarning();
+    if (!g_pEventLoopManager)
+        return;
+    g_debugWarnTimer = makeShared<CEventLoopTimer>(
+        std::chrono::seconds(30),
+        [](SP<CEventLoopTimer>, void*) {
+            if (!g_cfg.debug) // disabled meanwhile
+                return;
+            showDebugWarning();
+            armDebugWarning(); // keep nagging until debug is turned off
+        },
+        nullptr);
+    g_pEventLoopManager->addTimer(g_debugWarnTimer);
+}
+
+// ---------------------------------------------------------------------------
 // the key-event hook
 // ---------------------------------------------------------------------------
 using PonKeyEvent = bool (*)(void*, std::any, SP<IKeyboard>);
@@ -179,7 +215,10 @@ bool hkOnKeyEvent(void* thisptr, std::any event, SP<IKeyboard> keyboard) {
 
     const StepResult r = g_sm.step(StepInput{sym, modBit, pressed});
 
-    if (g_cfg.debug) {
+    // Log ONLY chord-relevant events: modifier keys, keys we capture/commit, or
+    // keys while a prefix is in progress. Plain pass-through keystrokes (normal
+    // typing, incl. shifted text) are never logged, so debug can't keylog.
+    if (g_cfg.debug && (modBit != 0 || r.suppress || !r.commits.empty() || g_sm.awaitingNextChord())) {
         char name[64] = {0};
         if (sym)
             xkb_keysym_get_name(static_cast<xkb_keysym_t>(sym), name, sizeof(name));
@@ -203,6 +242,10 @@ bool hkOnKeyEvent(void* thisptr, std::any event, SP<IKeyboard> keyboard) {
 // ===========================================================================
 
 // Drop all registrations. If the lua state is unchanged, also unref closures.
+// Also reset config to defaults: settings are declared fresh each config
+// evaluation (the shim calls clear() at the top of every load), so e.g.
+// removing `keymap_configure({ debug = true })` actually turns debug back off —
+// otherwise the flag would persist in the still-loaded plugin across reloads.
 void clearRegistrations(lua_State* L) {
     if (g_lua && g_lua == L) {
         for (int ref : g_refs)
@@ -212,6 +255,8 @@ void clearRegistrations(lua_State* L) {
     g_tree.clear();
     g_sm.reset();
     cancelTimer();
+    g_cfg = Config{};
+    stopDebugWarning(); // debug just reset to false; re-armed if config re-enables it
 }
 
 // If the config was reloaded into a fresh lua state, our refs belong to a gone
@@ -326,8 +371,12 @@ int hm_configure(lua_State* L) {
         g_cfg.debug = lua_toboolean(L, -1);
     lua_pop(L, 1);
 
-    if (g_cfg.debug)
+    if (g_cfg.debug) {
         dbg("configure: debug on (timeout=%d strict=%d report=%d)", g_cfg.timeoutMs, static_cast<int>(g_cfg.strictDuplicates), static_cast<int>(g_cfg.reportDuplicates));
+        showDebugWarning(); // loud, immediate
+        armDebugWarning();  // ...and keep reminding every 30s until it's off
+    } else
+        stopDebugWarning();
 
     // modified_leaf_commit_delay_ms is accepted for backward compatibility but
     // ignored: matching is eager now (a final binding fires on key-down).
@@ -367,13 +416,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     }
     if (!addr) {
         HyprlandAPI::addNotification(handle, "[hyprmacs-keymap] could not find onKeyEvent to hook; chords disabled", CHyprColor(0.9f, 0.2f, 0.2f, 1.0f), 10000);
-        return {"hyprmacs-keymap", "Emacs-like key chords (FAILED to hook)", "11xx", "1.5"};
+        return {"hyprmacs-keymap", "Emacs-like key chords (FAILED to hook)", "11xx", "1.6"};
     }
 
     g_keyHook = HyprlandAPI::createFunctionHook(handle, addr, rc<void*>(&hkOnKeyEvent));
     if (!g_keyHook || !g_keyHook->hook()) {
         HyprlandAPI::addNotification(handle, "[hyprmacs-keymap] failed to install onKeyEvent hook; chords disabled", CHyprColor(0.9f, 0.2f, 0.2f, 1.0f), 10000);
-        return {"hyprmacs-keymap", "Emacs-like key chords (FAILED to hook)", "11xx", "1.5"};
+        return {"hyprmacs-keymap", "Emacs-like key chords (FAILED to hook)", "11xx", "1.6"};
     }
 
     HyprlandAPI::addLuaFunction(handle, "hyprmacs_keymap", "register", &hm_register);
@@ -381,11 +430,12 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addLuaFunction(handle, "hyprmacs_keymap", "clear", &hm_clear);
 
     logmsg("loaded; hl.plugin.hyprmacs_keymap.{register,configure,clear} available");
-    return {"hyprmacs-keymap", "Emacs-like, modifier-aware key chords for Hyprland", "11xx", "1.5"};
+    return {"hyprmacs-keymap", "Emacs-like, modifier-aware key chords for Hyprland", "11xx", "1.6"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
     cancelTimer();
+    stopDebugWarning();
     if (g_keyHook)
         g_keyHook->unhook();
     if (g_lua) {

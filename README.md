@@ -42,6 +42,8 @@ hyprpm enable hyprmacs-keymap
 hyprpm reload
 ```
 
+After changing the source, `hyprpm update` rebuilds and reloads it in one step.
+
 or **manually** in the running session:
 
 ```sh
@@ -120,12 +122,20 @@ keymap_configure({
     submap_timeout_ms = 5000,  -- reset a half-typed prefix after N ms (default: off)
     strict_duplicates = false, -- error on duplicate final bindings
     report_duplicates = false, -- notify (but still allow) duplicate finals
+    debug             = false, -- diagnostics to /tmp/hyprmacs-keymap.log (default: off)
 })
 ```
 
 Conflict policy: duplicate final bindings are allowed by default and run in
 registration order; a sequence cannot be both a prefix and a final binding
 (always an error).
+
+Settings are declarative — they reset to defaults on every reload, so removing a
+line (e.g. `debug`) turns it back off. `debug` logs only **chord-relevant**
+events (modifiers, captured/committed keys, prefix progress) to
+`/tmp/hyprmacs-keymap.log` (owner-only); plain typed text is never logged, so it
+is not a keylogger. While it is on, the plugin shows a loud red notification and
+repeats it every 30s as a reminder. Leave it off unless diagnosing.
 
 ## How it works
 
