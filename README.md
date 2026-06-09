@@ -1,4 +1,4 @@
-# Hyprmacs
+# hyprmacs-keymap
 
 Emacs-like, modifier-aware key chords for **Hyprland 0.55+**, as a native C++
 plugin.
@@ -28,7 +28,7 @@ keymap_exec("M-print",   'grim -g "$(slurp)"') -- Alt+Print, single chord
 ### 1. Build
 
 ```sh
-make                              # -> ./hyprmacs.so
+make                              # -> ./hyprmacs-keymap.so
 make HYPRLAND_SRC=/path/Hyprland  # alternatively, build against a checkout
 ```
 
@@ -38,25 +38,25 @@ Either with **hyprpm**:
 
 ```sh
 hyprpm add file:///path/to/hyprmacs-keymap   # or a remote git URL
-hyprpm enable hyprmacs
+hyprpm enable hyprmacs-keymap
 hyprpm reload
 ```
 
 or **manually** in the running session:
 
 ```sh
-hyprctl plugin load "$PWD/hyprmacs.so"
+hyprctl plugin load "$PWD/hyprmacs-keymap.so"
 ```
 
 ### 3. Wire the Lua API into your config
 
-Loading the `.so` only provides the engine and the `hl.plugin.hyprmacs.*`
+Loading the `.so` only provides the engine and the `hl.plugin.hyprmacs_keymap.*`
 registration functions. The human-facing API (`keymap_set`, `keymap_exec`,
-`bind`, …) comes from the shim **`hyprmacs.lua`**, which must be required
+`bind`, …) comes from the shim **`hyprmacs-keymap.lua`**, which must be required
 **before** any module that defines keybinds:
 
 ```lua
-require("hyprmacs")   -- defines the API; must come before your keybinds
+require("hyprmacs-keymap")   -- defines the API; must come before your keybinds
 require("keybinds")   -- your keymap_set / keymap_exec / bind calls
 ```
 
@@ -64,7 +64,7 @@ Install the helper onto Hyprland's Lua path (the config dir is already on
 `package.path`):
 
 ```sh
-make install-helper                            # -> ~/.config/hypr/hyprmacs.lua
+make install-helper                            # -> ~/.config/hypr/hyprmacs-keymap.lua
 make install-helper LUA_HELPER_DIR=/some/dir   # custom location
 ```
 
@@ -72,12 +72,12 @@ Then load the plugin one of these ways:
 
 * **hyprpm**: nothing else to do — the shim detects the plugin is already loaded
   and does not call `hl.plugin.load`.
-* **self-load**: set `HYPRMACS_SO` before the require, or drop the built
-  `hyprmacs.so` into `~/.config/hypr/plugins/`:
+* **self-load**: set `HYPRMACS_KEYMAP_SO` before the require, or drop the built
+  `hyprmacs-keymap.so` into `~/.config/hypr/plugins/`:
 
   ```lua
-  HYPRMACS_SO = "/path/to/hyprmacs.so"
-  require("hyprmacs")
+  HYPRMACS_KEYMAP_SO = "/path/to/hyprmacs-keymap.so"
+  require("hyprmacs-keymap")
   ```
 
 On the first config evaluation the plugin is still being queued, so binding
@@ -166,9 +166,9 @@ make test   # builds & runs tests/sim.cpp (needs only xkbcommon)
 | `src/KeyParser.{hpp,cpp}` | Parse key syntax → `Chord` steps. |
 | `src/PrefixTree.{hpp,cpp}` | Chord prefix tree + duplicate/conflict policy. |
 | `src/ChordStateMachine.{hpp,cpp}` | The deterministic chord engine. |
-| `src/Plugin.cpp` | Hyprland glue: key-event hook + `hl.plugin.hyprmacs.*`. |
+| `src/Plugin.cpp` | Hyprland glue: key-event hook + `hl.plugin.hyprmacs_keymap.*`. |
 | `tests/sim.cpp` | Standalone chord-transition simulation. |
-| `hyprmacs.lua` | Lua shim exposing the `keymap_set`/`keymap_exec` API. |
+| `hyprmacs-keymap.lua` | Lua shim exposing the `keymap_set`/`keymap_exec` API. |
 | `hyprpm.toml` | hyprpm package manifest. |
 
 ## License

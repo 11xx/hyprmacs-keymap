@@ -1,20 +1,20 @@
 -- -*- mode: lua; -*-
--- Hyprmacs Lua shim.
+-- hyprmacs-keymap Lua shim.
 --
--- Drop-in replacement for the old `require("hyprmacs-keymap")` helper. It loads
--- the native plugin and re-exposes the same global API (keymap_set, keymap_exec,
--- keymap_configure, bind, bind_exec, ...) so existing modules such as
--- keybinds.lua keep working unchanged.
+-- Loads the native plugin and exposes the global keymap API (keymap_set,
+-- keymap_exec, keymap_configure, bind, bind_exec, ...) used by your keybinds.
+-- require("hyprmacs-keymap") before any module that defines binds.
 --
--- The chord engine, prefix tree, modifier tracking and commit rules now live in
--- the native plugin (hl.plugin.hyprmacs.*); this file is only thin glue.
+-- The chord engine, prefix tree, modifier tracking and commit rules live in the
+-- native plugin (hl.plugin.hyprmacs_keymap.*); this file is only thin glue.
+-- (The hl.plugin namespace must be a Lua identifier, hence the underscore.)
 
--- hl.plugin.hyprmacs.* only exists once the plugin has loaded. On the very first
--- config evaluation the plugin is still being queued, so this is nil; Hyprland
--- then reloads the config (handlePluginLoads -> reload) and on that second pass
--- the table is present and every binding below registers for real.
+-- hl.plugin.hyprmacs_keymap.* only exists once the plugin has loaded. On the very
+-- first config evaluation the plugin is still being queued, so this is nil;
+-- Hyprland then reloads the config (handlePluginLoads -> reload) and on that
+-- second pass the table is present and every binding below registers for real.
 local function hm()
-    return hl.plugin and hl.plugin.hyprmacs or nil
+    return hl.plugin and hl.plugin.hyprmacs_keymap or nil
 end
 
 local function file_exists(path)
@@ -30,15 +30,15 @@ end
 --   * If managed by hyprpm, the plugin is already loaded (hm() is truthy) and we
 --     must NOT call hl.plugin.load — hyprpm owns load state.
 --   * Otherwise self-load via hl.plugin.load using, in order: the global
---     HYPRMACS_SO, then ~/.config/hypr/plugins/hyprmacs.so if present.
+--     HYPRMACS_KEYMAP_SO, then ~/.config/hypr/plugins/hyprmacs-keymap.so.
 if not hm() then
-    local so = HYPRMACS_SO
+    local so = HYPRMACS_KEYMAP_SO
     if not so then
         local base = os.getenv("XDG_CONFIG_HOME")
         if not base or base == "" then
             base = (os.getenv("HOME") or "") .. "/.config"
         end
-        local guess = base .. "/hypr/plugins/hyprmacs.so"
+        local guess = base .. "/hypr/plugins/hyprmacs-keymap.so"
         if file_exists(guess) then
             so = guess
         end
@@ -108,8 +108,7 @@ function keymap_configure(config)
 end
 
 -- ===========================================================================
--- final (non-chord) binds — now plain Hyprland binds; the submap hard-reset
--- dance the old helper needed is gone with submaps.
+-- final (non-chord) binds — plain Hyprland binds.
 -- ===========================================================================
 
 function bind(keys, dispatcher, flags)
@@ -122,8 +121,8 @@ function bind_exec(keys, cmd, flags)
 end
 
 -- ===========================================================================
--- legacy submap helpers — kept so older modules don't break. Hyprmacs no longer
--- uses submaps for chords, but Hyprland's submap machinery still exists.
+-- legacy submap helpers — kept so older modules don't break. The chord engine
+-- no longer uses submaps, but Hyprland's submap machinery still exists.
 -- ===========================================================================
 
 function reset_submap()

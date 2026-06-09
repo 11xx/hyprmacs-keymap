@@ -3,7 +3,7 @@
 // Responsibilities (everything Hyprland-specific lives here):
 //   * export the plugin ABI entry points;
 //   * hook CKeybindManager::onKeyEvent so the chord engine sees every key;
-//   * expose hl.plugin.hyprmacs.{register,configure,clear} to the Lua config;
+//   * expose hl.plugin.hyprmacs_keymap.{register,configure,clear} to the Lua config;
 //   * run committed actions by pcall'ing the stored Lua closures;
 //   * drive the optional prefix timeout via the event loop.
 //
@@ -59,7 +59,7 @@ struct Config {
 SP<CEventLoopTimer> g_timer;
 
 void logmsg(const std::string& s) {
-    std::fprintf(stderr, "[hyprmacs] %s\n", s.c_str());
+    std::fprintf(stderr, "[hyprmacs-keymap] %s\n", s.c_str());
 }
 
 // ---------------------------------------------------------------------------
@@ -146,7 +146,7 @@ bool hkOnKeyEvent(void* thisptr, std::any event, SP<IKeyboard> keyboard) {
 }
 
 // ===========================================================================
-// hl.plugin.hyprmacs.* lua bridge
+// hl.plugin.hyprmacs_keymap.* lua bridge
 // ===========================================================================
 
 // Drop all registrations. If the lua state is unchanged, also unref closures.
@@ -177,15 +177,15 @@ int hm_register(lua_State* L) {
     adoptState(L);
 
     if (lua_type(L, 1) != LUA_TSTRING)
-        return luaL_error(L, "hyprmacs.register: argument 1 must be a key-sequence string");
+        return luaL_error(L, "hyprmacs-keymap.register: argument 1 must be a key-sequence string");
     if (!lua_isfunction(L, 2))
-        return luaL_error(L, "hyprmacs.register: argument 2 must be a function");
+        return luaL_error(L, "hyprmacs-keymap.register: argument 2 must be a function");
 
     const std::string seq = lua_tostring(L, 1);
 
     const ParseResult parsed = parseSequence(seq);
     if (!parsed.ok)
-        return luaL_error(L, "hyprmacs.register: %s", parsed.error.c_str());
+        return luaL_error(L, "hyprmacs-keymap.register: %s", parsed.error.c_str());
 
     lua_pushvalue(L, 2);
     const int ref = luaL_ref(L, LUA_REGISTRYINDEX);
@@ -196,27 +196,27 @@ int hm_register(lua_State* L) {
         case InsertStatus::AddedDuplicate:
             g_refs.push_back(ref);
             if (g_cfg.reportDuplicates)
-                HyprlandAPI::addNotification(PHANDLE, "[hyprmacs] duplicate final binding: " + seq, CHyprColor(0.8f, 0.6f, 0.1f, 1.0f), 5000);
+                HyprlandAPI::addNotification(PHANDLE, "[hyprmacs-keymap] duplicate final binding: " + seq, CHyprColor(0.8f, 0.6f, 0.1f, 1.0f), 5000);
             break;
         case InsertStatus::ErrStrictDuplicate:
             luaL_unref(L, LUA_REGISTRYINDEX, ref);
-            return luaL_error(L, "hyprmacs.register: duplicate binding '%s'", seq.c_str());
+            return luaL_error(L, "hyprmacs-keymap.register: duplicate binding '%s'", seq.c_str());
         case InsertStatus::ErrPrefixOverFinal:
             luaL_unref(L, LUA_REGISTRYINDEX, ref);
-            return luaL_error(L, "hyprmacs.register: '%s' conflicts with an existing final binding", seq.c_str());
+            return luaL_error(L, "hyprmacs-keymap.register: '%s' conflicts with an existing final binding", seq.c_str());
         case InsertStatus::ErrFinalOverPrefix:
             luaL_unref(L, LUA_REGISTRYINDEX, ref);
-            return luaL_error(L, "hyprmacs.register: '%s' conflicts with an existing prefix binding", seq.c_str());
+            return luaL_error(L, "hyprmacs-keymap.register: '%s' conflicts with an existing prefix binding", seq.c_str());
         case InsertStatus::ErrEmpty:
             luaL_unref(L, LUA_REGISTRYINDEX, ref);
-            return luaL_error(L, "hyprmacs.register: empty key sequence");
+            return luaL_error(L, "hyprmacs-keymap.register: empty key sequence");
     }
     return 0;
 }
 
 int hm_configure(lua_State* L) {
     if (!lua_istable(L, 1))
-        return luaL_error(L, "hyprmacs.configure: argument 1 must be a table");
+        return luaL_error(L, "hyprmacs-keymap.configure: argument 1 must be a table");
 
     lua_getfield(L, 1, "submap_timeout_ms");
     if (lua_isnumber(L, -1))
@@ -259,7 +259,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     const SVersionInfo ver = HyprlandAPI::getHyprlandVersion(handle);
     if (ver.hash != GIT_COMMIT_HASH)
-        HyprlandAPI::addNotification(handle, "[hyprmacs] built against a different Hyprland commit; rebuild if chords misbehave", CHyprColor(0.9f, 0.5f, 0.1f, 1.0f), 7000);
+        HyprlandAPI::addNotification(handle, "[hyprmacs-keymap] built against a different Hyprland commit; rebuild if chords misbehave", CHyprColor(0.9f, 0.5f, 0.1f, 1.0f), 7000);
 
     // Locate and hook CKeybindManager::onKeyEvent.
     void*      addr = nullptr;
@@ -271,22 +271,22 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         }
     }
     if (!addr) {
-        HyprlandAPI::addNotification(handle, "[hyprmacs] could not find onKeyEvent to hook; chords disabled", CHyprColor(0.9f, 0.2f, 0.2f, 1.0f), 10000);
-        return {"hyprmacs", "Emacs-like key chords (FAILED to hook)", "11xx", "1.0"};
+        HyprlandAPI::addNotification(handle, "[hyprmacs-keymap] could not find onKeyEvent to hook; chords disabled", CHyprColor(0.9f, 0.2f, 0.2f, 1.0f), 10000);
+        return {"hyprmacs-keymap", "Emacs-like key chords (FAILED to hook)", "11xx", "1.0"};
     }
 
     g_keyHook = HyprlandAPI::createFunctionHook(handle, addr, rc<void*>(&hkOnKeyEvent));
     if (!g_keyHook || !g_keyHook->hook()) {
-        HyprlandAPI::addNotification(handle, "[hyprmacs] failed to install onKeyEvent hook; chords disabled", CHyprColor(0.9f, 0.2f, 0.2f, 1.0f), 10000);
-        return {"hyprmacs", "Emacs-like key chords (FAILED to hook)", "11xx", "1.0"};
+        HyprlandAPI::addNotification(handle, "[hyprmacs-keymap] failed to install onKeyEvent hook; chords disabled", CHyprColor(0.9f, 0.2f, 0.2f, 1.0f), 10000);
+        return {"hyprmacs-keymap", "Emacs-like key chords (FAILED to hook)", "11xx", "1.0"};
     }
 
-    HyprlandAPI::addLuaFunction(handle, "hyprmacs", "register", &hm_register);
-    HyprlandAPI::addLuaFunction(handle, "hyprmacs", "configure", &hm_configure);
-    HyprlandAPI::addLuaFunction(handle, "hyprmacs", "clear", &hm_clear);
+    HyprlandAPI::addLuaFunction(handle, "hyprmacs_keymap", "register", &hm_register);
+    HyprlandAPI::addLuaFunction(handle, "hyprmacs_keymap", "configure", &hm_configure);
+    HyprlandAPI::addLuaFunction(handle, "hyprmacs_keymap", "clear", &hm_clear);
 
-    logmsg("loaded; hl.plugin.hyprmacs.{register,configure,clear} available");
-    return {"hyprmacs", "Emacs-like, modifier-aware key chords for Hyprland", "11xx", "1.0"};
+    logmsg("loaded; hl.plugin.hyprmacs_keymap.{register,configure,clear} available");
+    return {"hyprmacs-keymap", "Emacs-like, modifier-aware key chords for Hyprland", "11xx", "1.0"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {

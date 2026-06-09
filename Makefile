@@ -1,8 +1,8 @@
 # Hyprmacs — native Hyprland plugin (Hyprland 0.55.x)
 #
-#   make            build ./hyprmacs.so (default; this is what hyprpm runs)
+#   make            build ./hyprmacs-keymap.so (default; this is what hyprpm runs)
 #   make test       build & run the standalone chord simulation (no Hyprland)
-#   make install    alias for `make all` — builds ./hyprmacs.so in the repo dir
+#   make install    alias for `make all` — builds ./hyprmacs-keymap.so in the repo dir
 #   make clean
 #
 # hyprpm builds with `pkg-config hyprland` on its managed PKG_CONFIG_PATH.
@@ -13,10 +13,10 @@ CXX ?= g++
 HYPRLAND_SRC ?=
 
 # Where `make install-helper` copies the Lua helper. Hyprland's config dir is
-# already on Lua's package.path, so require("hyprmacs") finds it there.
+# already on Lua's package.path, so require("hyprmacs-keymap") finds it there.
 LUA_HELPER_DIR ?= $(HOME)/.config/hypr
 
-TARGET = hyprmacs.so
+TARGET = hyprmacs-keymap.so
 SRCS   = src/KeyParser.cpp src/PrefixTree.cpp src/ChordStateMachine.cpp src/Plugin.cpp
 
 # Hyprland is built with C++26; plugins must match.
@@ -45,8 +45,8 @@ install: all
 # (by hyprpm, or via hl.plugin.load); this only places the keymap_* API helper.
 install-helper:
 	mkdir -p "$(LUA_HELPER_DIR)"
-	cp hyprmacs.lua "$(LUA_HELPER_DIR)/hyprmacs.lua"
-	@echo "installed helper -> $(LUA_HELPER_DIR)/hyprmacs.lua  (add: require(\"hyprmacs\"))"
+	cp hyprmacs-keymap.lua "$(LUA_HELPER_DIR)/hyprmacs-keymap.lua"
+	@echo "installed helper -> $(LUA_HELPER_DIR)/hyprmacs-keymap.lua  (add: require(\"hyprmacs-keymap\"))"
 
 check-hyprland-src:
 	@if test -n "$(HYPRLAND_SRC)"; then test -f "$(HYPRLAND_SRC)/src/plugins/PluginAPI.hpp" || \
