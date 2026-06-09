@@ -17,6 +17,7 @@
 #include <src/devices/IKeyboard.hpp>
 #include <src/managers/KeybindManager.hpp>
 #include <src/managers/SessionLockManager.hpp>
+#include <src/managers/input/InputManager.hpp>
 #include <src/managers/eventLoop/EventLoopManager.hpp>
 #include <src/managers/eventLoop/EventLoopTimer.hpp>
 #include <src/version.h>
@@ -54,6 +55,7 @@ struct Config {
     int  timeoutMs        = 0;     // prefix timeout, 0 = off (matches the Org default)
     bool strictDuplicates = false; // reject duplicate final bindings
     bool reportDuplicates = false; // notify on (still-allowed) duplicate finals
+    bool debug            = false; // log every key event the engine sees
 } g_cfg;
 
 SP<CEventLoopTimer> g_timer;
@@ -123,17 +125,29 @@ bool hkOnKeyEvent(void* thisptr, std::any event, SP<IKeyboard> keyboard) {
     } catch (...) { return passThrough(); }
 
     const uint32_t KEYCODE = e.keycode + 8; // libinput -> xkb offset
-    const Mods     modBit  = static_cast<Mods>(g_pKeybindManager->keycodeToModifier(KEYCODE)) & MOD_ALL;
-    const bool     pressed = (e.state == WL_KEYBOARD_KEY_STATE_PRESSED);
 
-    Keysym sym = 0;
-    if (modBit == 0) {
-        xkb_state* st = keyboard->m_xkbSymState ? keyboard->m_xkbSymState : keyboard->m_xkbStaticState;
-        if (st)
-            sym = canonicaliseSym(static_cast<Keysym>(xkb_state_key_get_one_sym(st, KEYCODE)));
+    // Modifier keys are not chord keys: let them through untouched. Their state
+    // is read authoritatively below via getModsFromAllKBs().
+    if (g_pKeybindManager->keycodeToModifier(KEYCODE) != 0)
+        return passThrough();
+
+    const bool   pressed = (e.state == WL_KEYBOARD_KEY_STATE_PRESSED);
+    xkb_state*   st      = keyboard->m_xkbSymState ? keyboard->m_xkbSymState : keyboard->m_xkbStaticState;
+    const Keysym sym     = st ? canonicaliseSym(static_cast<Keysym>(xkb_state_key_get_one_sym(st, KEYCODE))) : 0;
+
+    // Authoritative modifier mask (same source Hyprland uses for its own binds),
+    // so chords match regardless of how modifiers reach the compositor.
+    const Mods mods = static_cast<Mods>(g_pInputManager->getModsFromAllKBs()) & MOD_ALL;
+
+    const StepResult r = g_sm.step(StepInput{sym, mods, pressed});
+
+    if (g_cfg.debug) {
+        char name[64] = {0};
+        if (sym)
+            xkb_keysym_get_name(static_cast<xkb_keysym_t>(sym), name, sizeof(name));
+        std::fprintf(stderr, "[hyprmacs-keymap] %s sym=%s(0x%x) mods=0x%x suppress=%d commits=%zu\n", pressed ? "down" : "up  ", sym ? name : "-", static_cast<unsigned>(sym),
+                     static_cast<unsigned>(mods), static_cast<int>(r.suppress), r.commits.size());
     }
-
-    const StepResult r = g_sm.step(StepInput{sym, modBit, pressed});
 
     for (ActionId a : r.commits)
         runAction(a);
@@ -234,6 +248,11 @@ int hm_configure(lua_State* L) {
         g_cfg.reportDuplicates = lua_toboolean(L, -1);
     lua_pop(L, 1);
 
+    lua_getfield(L, 1, "debug");
+    if (lua_isboolean(L, -1))
+        g_cfg.debug = lua_toboolean(L, -1);
+    lua_pop(L, 1);
+
     // modified_leaf_commit_delay_ms is accepted for backward compatibility but
     // ignored: matching is eager now (a final binding fires on key-down).
     return 0;
@@ -272,13 +291,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     }
     if (!addr) {
         HyprlandAPI::addNotification(handle, "[hyprmacs-keymap] could not find onKeyEvent to hook; chords disabled", CHyprColor(0.9f, 0.2f, 0.2f, 1.0f), 10000);
-        return {"hyprmacs-keymap", "Emacs-like key chords (FAILED to hook)", "11xx", "1.0"};
+        return {"hyprmacs-keymap", "Emacs-like key chords (FAILED to hook)", "11xx", "1.2"};
     }
 
     g_keyHook = HyprlandAPI::createFunctionHook(handle, addr, rc<void*>(&hkOnKeyEvent));
     if (!g_keyHook || !g_keyHook->hook()) {
         HyprlandAPI::addNotification(handle, "[hyprmacs-keymap] failed to install onKeyEvent hook; chords disabled", CHyprColor(0.9f, 0.2f, 0.2f, 1.0f), 10000);
-        return {"hyprmacs-keymap", "Emacs-like key chords (FAILED to hook)", "11xx", "1.0"};
+        return {"hyprmacs-keymap", "Emacs-like key chords (FAILED to hook)", "11xx", "1.2"};
     }
 
     HyprlandAPI::addLuaFunction(handle, "hyprmacs_keymap", "register", &hm_register);
@@ -286,7 +305,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addLuaFunction(handle, "hyprmacs_keymap", "clear", &hm_clear);
 
     logmsg("loaded; hl.plugin.hyprmacs_keymap.{register,configure,clear} available");
-    return {"hyprmacs-keymap", "Emacs-like, modifier-aware key chords for Hyprland", "11xx", "1.0"};
+    return {"hyprmacs-keymap", "Emacs-like, modifier-aware key chords for Hyprland", "11xx", "1.2"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
