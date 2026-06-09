@@ -151,14 +151,6 @@ The chord engine is independent of Hyprland and has a standalone simulation:
 make test   # builds & runs tests/sim.cpp (needs only xkbcommon)
 ```
 
-## Migrating from a Lua-submap helper
-
-The plugin keeps the same public API, so existing `keymap_set`/`keymap_exec`/
-`bind` calls work unchanged. Replace the old helper's `require(...)` with
-`require("hyprmacs")` (kept before your keybinds module) and install the plugin
-as above. The `modified_leaf_commit_delay_ms` option is accepted but ignored —
-commit timing is now driven by modifier release rather than a timer.
-
 ## Layout
 
 | Path | Purpose |
