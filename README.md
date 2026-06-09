@@ -156,6 +156,25 @@ If a binding is registered more than once it runs every action in registration
 order (handy for chaining); set `strict_duplicates = true` to forbid that and
 keep bindings single/unitary.
 
+## Gotcha: Alt+PrtSc and magic-SysRq
+
+`PrtSc` is `KEY_SYSRQ`, and `Alt+SysRq` is the kernel's magic-SysRq combo. When
+`kernel.sysrq != 0` the kernel **intercepts `Alt+PrtSc` before it reaches
+Hyprland**, buffering the keypress until you release Alt. The effect: a chord
+like `M-print` / `s-M-print` fires on *Alt-release* (and `s-M-print` can
+mis-resolve to `M-print` depending on release order). This is not the chord
+engine — the press never reaches the plugin — so the plugin can't fix it; it
+only warns. Options:
+
+* `sudo sysctl kernel.sysrq=0` (and persist via `/etc/sysctl.d/`), or
+* remap `PrtSc` off `KEY_SYSRQ` (e.g. to `KEY_PRINT`) in your remapper and put
+  REISUB on another key, or
+* don't combine `Alt` with `PrtSc` (`print`, `S-print`, `C-print`, `s-print …`
+  are unaffected).
+
+When `kernel.sysrq != 0` and you register an `Alt`+`Print` binding, the plugin
+logs a warning to `/tmp/hyprmacs-keymap.log` and shows a one-time notification.
+
 ## Testing
 
 The chord engine is independent of Hyprland and has a standalone simulation:

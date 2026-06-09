@@ -91,6 +91,18 @@ void dbg(const char* fmt, ...) {
     logfile(buf);
 }
 
+// Current kernel.sysrq value (0 = magic-SysRq disabled). When non-zero, the
+// kernel intercepts Alt+SysRq (= Alt+PrtSc) before it ever reaches Hyprland.
+int readSysrq() {
+    int v = 0;
+    if (FILE* f = std::fopen("/proc/sys/kernel/sysrq", "r")) {
+        if (std::fscanf(f, "%d", &v) != 1)
+            v = 0;
+        std::fclose(f);
+    }
+    return v;
+}
+
 // ---------------------------------------------------------------------------
 // action execution
 // ---------------------------------------------------------------------------
@@ -262,6 +274,30 @@ int hm_register(lua_State* L) {
         }
         dbg("register '%s' -> [%s] status=%d", seq.c_str(), chords.c_str(), static_cast<int>(status));
     }
+
+    // Heads-up: Alt+Print is the magic-SysRq combo. When kernel.sysrq != 0 the
+    // kernel buffers it until Alt is released, so the chord fires on Alt-release
+    // (and can mis-resolve, e.g. s-M-print -> M-print) instead of on press. This
+    // is unfixable in the plugin (the press-time state never reaches us), so just
+    // warn loudly. Dormant when sysrq is disabled.
+    bool altPrint = false;
+    for (const auto& c : parsed.chords)
+        if (c.sym == canonicaliseSym(static_cast<Keysym>(XKB_KEY_Print)) && (c.mods & MOD_ALT))
+            altPrint = true;
+    if (altPrint) {
+        if (const int sysrq = readSysrq(); sysrq != 0) {
+            logmsg("WARNING: '" + seq + "' uses Alt+Print = magic-SysRq; the kernel (kernel.sysrq=" + std::to_string(sysrq) +
+                   ") intercepts it, so it fires on Alt-release, not on press. Fix: set kernel.sysrq=0, or remap PrtSc off KEY_SYSRQ.");
+            static bool notified = false;
+            if (!notified) {
+                notified = true;
+                HyprlandAPI::addNotification(PHANDLE,
+                                             "[hyprmacs-keymap] An Alt+Print binding is intercepted by magic-SysRq (kernel.sysrq=" + std::to_string(sysrq) +
+                                                 "); it fires on Alt-release. Set kernel.sysrq=0. See /tmp/hyprmacs-keymap.log",
+                                             CHyprColor(0.9f, 0.5f, 0.1f, 1.0f), 9000);
+            }
+        }
+    }
     return 0;
 }
 
@@ -331,13 +367,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     }
     if (!addr) {
         HyprlandAPI::addNotification(handle, "[hyprmacs-keymap] could not find onKeyEvent to hook; chords disabled", CHyprColor(0.9f, 0.2f, 0.2f, 1.0f), 10000);
-        return {"hyprmacs-keymap", "Emacs-like key chords (FAILED to hook)", "11xx", "1.4"};
+        return {"hyprmacs-keymap", "Emacs-like key chords (FAILED to hook)", "11xx", "1.5"};
     }
 
     g_keyHook = HyprlandAPI::createFunctionHook(handle, addr, rc<void*>(&hkOnKeyEvent));
     if (!g_keyHook || !g_keyHook->hook()) {
         HyprlandAPI::addNotification(handle, "[hyprmacs-keymap] failed to install onKeyEvent hook; chords disabled", CHyprColor(0.9f, 0.2f, 0.2f, 1.0f), 10000);
-        return {"hyprmacs-keymap", "Emacs-like key chords (FAILED to hook)", "11xx", "1.4"};
+        return {"hyprmacs-keymap", "Emacs-like key chords (FAILED to hook)", "11xx", "1.5"};
     }
 
     HyprlandAPI::addLuaFunction(handle, "hyprmacs_keymap", "register", &hm_register);
@@ -345,7 +381,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addLuaFunction(handle, "hyprmacs_keymap", "clear", &hm_clear);
 
     logmsg("loaded; hl.plugin.hyprmacs_keymap.{register,configure,clear} available");
-    return {"hyprmacs-keymap", "Emacs-like, modifier-aware key chords for Hyprland", "11xx", "1.4"};
+    return {"hyprmacs-keymap", "Emacs-like, modifier-aware key chords for Hyprland", "11xx", "1.5"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
