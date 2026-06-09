@@ -1,0 +1,10 @@
+# build artifacts
+build/
+*.o
+*.so
+tests/sim
+compile_commands.json
+
+# editor
+*.swp
+.cache/
