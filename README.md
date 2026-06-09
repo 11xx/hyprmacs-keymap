@@ -60,8 +60,15 @@ require("hyprmacs")   -- defines the API; must come before your keybinds
 require("keybinds")   -- your keymap_set / keymap_exec / bind calls
 ```
 
-Place `hyprmacs.lua` somewhere on Lua's `package.path` (e.g. next to your other
-config modules) and load the plugin one of these ways:
+Install the helper onto Hyprland's Lua path (the config dir is already on
+`package.path`):
+
+```sh
+make install-helper                            # -> ~/.config/hypr/hyprmacs.lua
+make install-helper LUA_HELPER_DIR=/some/dir   # custom location
+```
+
+Then load the plugin one of these ways:
 
 * **hyprpm**: nothing else to do — the shim detects the plugin is already loaded
   and does not call `hl.plugin.load`.
