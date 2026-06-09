@@ -11,7 +11,9 @@ CXXSTD     ?= -std=c++26
 
 # Hyprland plugins must be built against the running Hyprland's headers and the
 # same toolchain/ABI. The 'hyprland' pkg-config pulls in every transitive dep.
-PLUGIN_PKGS = hyprland luajit
+# Hyprland 0.55 embeds PUC Lua 5.5 (NOT LuaJIT); the plugin must use the very
+# same Lua so it shares Hyprland's lua_State and registry index.
+PLUGIN_PKGS = hyprland lua
 PLUGIN_CFLAGS  = $(shell pkg-config --cflags $(PLUGIN_PKGS))
 
 WARN       = -Wall -Wextra -Wno-unused-parameter
@@ -43,7 +45,7 @@ $(BUILD)/%.o: src/%.cpp | $(BUILD)
 	$(CXX) $(COMMON) $(PLUGIN_CFLAGS) -c $< -o $@
 
 $(PLUGIN_SO): $(CORE_OBJ) $(PLUGIN_OBJ)
-	$(CXX) $(COMMON) -shared $^ -o $@ $(shell pkg-config --libs xkbcommon luajit)
+	$(CXX) $(COMMON) -shared $^ -o $@ $(shell pkg-config --libs xkbcommon lua)
 	@echo "built $(PLUGIN_SO)"
 
 # --- standalone test harness (no Hyprland needed, only xkbcommon) ---------
