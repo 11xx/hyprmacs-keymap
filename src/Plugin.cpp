@@ -51,7 +51,7 @@ ChordStateMachine g_sm{&g_tree};
 // The config Lua state. Set on first register/clear; refreshed if it changes
 // (i.e. the config was reloaded into a new state).
 lua_State*        g_lua = nullptr;
-// Every action closure we hold a LuaJIT registry ref for, so clear() can unref.
+// Every action closure we hold a Lua registry ref for, so clear() can unref.
 std::vector<int>  g_refs;
 
 struct Config {

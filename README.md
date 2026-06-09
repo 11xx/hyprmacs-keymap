@@ -25,16 +25,11 @@ keymap_exec("M-print",   'grim -g "$(slurp)"') -- Alt+Print, single chord
 
 ## Install
 
-### 1. Build
+Two pieces: the plugin (`.so`) and the Lua helper (`hyprmacs-keymap.lua`). hyprpm
+builds and loads the `.so`; the helper provides the `keymap_set`/`keymap_exec`
+API and lives in your config.
 
-```sh
-make                              # -> ./hyprmacs-keymap.so
-make HYPRLAND_SRC=/path/Hyprland  # alternatively, build against a checkout
-```
-
-### 2. Load the plugin
-
-Either with **hyprpm**:
+### 1. Add the plugin with hyprpm
 
 ```sh
 hyprpm add file:///path/to/hyprmacs-keymap   # or a remote git URL
@@ -42,49 +37,53 @@ hyprpm enable hyprmacs-keymap
 hyprpm reload
 ```
 
-After changing the source, `hyprpm update` rebuilds and reloads it in one step.
+hyprpm runs the build itself — you do **not** need to run `make`. After changing
+the source, `hyprpm update` rebuilds and reloads in one step (also rebuild after
+every Hyprland update).
 
-or **manually** in the running session:
+### 2. Install the Lua helper
 
-```sh
-hyprctl plugin load "$PWD/hyprmacs-keymap.so"
-```
-
-### 3. Wire the Lua API into your config
-
-Loading the `.so` only provides the engine and the `hl.plugin.hyprmacs_keymap.*`
-registration functions. The human-facing API (`keymap_set`, `keymap_exec`,
-`bind`, …) comes from the shim **`hyprmacs-keymap.lua`**, which must be required
-**before** any module that defines keybinds:
-
-```lua
-require("hyprmacs-keymap")   -- defines the API; must come before your keybinds
-require("keybinds")   -- your keymap_set / keymap_exec / bind calls
-```
-
-Install the helper onto Hyprland's Lua path (the config dir is already on
-`package.path`):
+The `.so` only exposes `hl.plugin.hyprmacs_keymap.*`; the friendly API
+(`keymap_set`, `keymap_exec`, `bind`, …) comes from `hyprmacs-keymap.lua`. Drop
+it on Hyprland's Lua path (the config dir already is one) — this is just a copy,
+not a build:
 
 ```sh
 make install-helper                            # -> ~/.config/hypr/hyprmacs-keymap.lua
-make install-helper LUA_HELPER_DIR=/some/dir   # custom location
+make install-helper LUA_HELPER_DIR=/some/dir   # or just: cp hyprmacs-keymap.lua ~/.config/hypr/
 ```
 
-Then load the plugin one of these ways:
+### 3. Require it before your keybinds
 
-* **hyprpm**: nothing else to do — the shim detects the plugin is already loaded
-  and does not call `hl.plugin.load`.
-* **self-load**: set `HYPRMACS_KEYMAP_SO` before the require, or drop the built
-  `hyprmacs-keymap.so` into `~/.config/hypr/plugins/`:
+```lua
+require("hyprmacs-keymap")   -- defines the API; must come before your keybinds
+require("keybinds")          -- your keymap_set / keymap_exec / bind calls
+```
 
-  ```lua
-  HYPRMACS_KEYMAP_SO = "/path/to/hyprmacs-keymap.so"
-  require("hyprmacs-keymap")
-  ```
+Under hyprpm the helper sees the plugin is already loaded and does nothing else.
+On the very first config evaluation the plugin is still being queued, so binding
+calls are no-ops; Hyprland loads it, re-evaluates, and everything registers on
+that pass. `hyprctl reload` re-registers cleanly.
 
-On the first config evaluation the plugin is still being queued, so binding
-calls are no-ops; Hyprland then loads the plugin and re-evaluates the config, and
-on that pass everything registers. `hyprctl reload` re-registers cleanly.
+### Manual build (development only)
+
+You only need `make` if you load the `.so` yourself instead of through hyprpm —
+e.g. heavy hands-on development:
+
+```sh
+make                               # -> ./hyprmacs-keymap.so
+make HYPRLAND_SRC=/path/Hyprland   # build against a Hyprland checkout
+hyprctl plugin load "$PWD/hyprmacs-keymap.so"
+```
+
+To have the helper self-load it (no hyprpm), point it at the file before the
+require — otherwise it auto-loads `~/.config/hypr/plugins/hyprmacs-keymap.so` if
+that exists:
+
+```lua
+HYPRMACS_KEYMAP_SO = "/path/to/hyprmacs-keymap.so"
+require("hyprmacs-keymap")
+```
 
 ## Key syntax
 
@@ -101,6 +100,11 @@ A sequence is space-separated chords; within a chord, modifiers precede the key.
 * Raw Hyprland syntax with `+` is also accepted: `"SUPER + F"`.
 * Aliases: `SPC`/`SPACE`→space, `RET`/`RETURN`→return, `ESC`/`ESCAPE`→escape.
 * Matching is case-insensitive (like Hyprland binds); use `S-` for Shift.
+* Modifier **order doesn't matter**: `s-M-x` and `M-s-x` are the same chord —
+  modifiers are an unordered set, as in Emacs. Internally a chord is
+  `(modifier bitmask, key)`, so there's no canonical-order requirement. (The old
+  Lua helper had to sort modifiers into a canonical `C M s S` order for
+  Hyprland's string-based bind matching; the native engine doesn't.)
 * Held modifiers are **not** carried into later chords: `s-x space` and
   `s-x s-space` are different bindings.
 
@@ -158,9 +162,8 @@ Since a sequence can't be both a prefix and a final binding, there's never any
 ambiguity about whether to fire now or wait.
 
 So `keymap_set("s-x s-c", …)` runs the moment `c` goes down (with Super still
-held); you don't have to release anything. Holding `Super+Alt` and pressing
-`Print` fires `s-M-print` immediately — the modifiers held *at the key press*
-pick the chord, so `s-M-print` and `M-print` stay distinct with no downgrades.
+held); you don't have to release anything. The modifiers held *at the key press*
+pick the chord, so `s-M-j` and `M-j` stay distinct with no downgrades.
 
 If a binding is registered more than once it runs every action in registration
 order (handy for chaining); set `strict_duplicates = true` to forbid that and

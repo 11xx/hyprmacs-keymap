@@ -29,7 +29,7 @@ enum : Mods {
     MOD_ALL   = MOD_SHIFT | MOD_CTRL | MOD_ALT | MOD_SUPER,
 };
 
-// Opaque action handle. In the plugin this IS the LuaJIT registry ref of the
+// Opaque action handle. In the plugin this IS the Lua registry ref of the
 // action closure; in the test harness it is just an arbitrary integer.
 using ActionId = int;
 
