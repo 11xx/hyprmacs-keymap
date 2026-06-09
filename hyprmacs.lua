@@ -9,24 +9,44 @@
 -- The chord engine, prefix tree, modifier tracking and commit rules now live in
 -- the native plugin (hl.plugin.hyprmacs.*); this file is only thin glue.
 
--- Where the built plugin lives. Override by setting the global HYPRMACS_SO
--- before require("hyprmacs"), or run `make install` to drop it here.
-local function default_so()
-    local base = os.getenv("XDG_CONFIG_HOME")
-    if not base or base == "" then
-        base = (os.getenv("HOME") or "") .. "/.config"
-    end
-    return base .. "/hypr/plugins/hyprmacs.so"
-end
-
-hl.plugin.load(HYPRMACS_SO or default_so())
-
 -- hl.plugin.hyprmacs.* only exists once the plugin has loaded. On the very first
 -- config evaluation the plugin is still being queued, so this is nil; Hyprland
 -- then reloads the config (handlePluginLoads -> reload) and on that second pass
 -- the table is present and every binding below registers for real.
 local function hm()
     return hl.plugin and hl.plugin.hyprmacs or nil
+end
+
+local function file_exists(path)
+    local f = io.open(path, "r")
+    if f then
+        f:close()
+        return true
+    end
+    return false
+end
+
+-- Loading strategy:
+--   * If managed by hyprpm, the plugin is already loaded (hm() is truthy) and we
+--     must NOT call hl.plugin.load — hyprpm owns load state.
+--   * Otherwise self-load via hl.plugin.load using, in order: the global
+--     HYPRMACS_SO, then ~/.config/hypr/plugins/hyprmacs.so if present.
+if not hm() then
+    local so = HYPRMACS_SO
+    if not so then
+        local base = os.getenv("XDG_CONFIG_HOME")
+        if not base or base == "" then
+            base = (os.getenv("HOME") or "") .. "/.config"
+        end
+        local guess = base .. "/hypr/plugins/hyprmacs.so"
+        if file_exists(guess) then
+            so = guess
+        end
+    end
+    if so then
+        hl.plugin.load(so)
+    end
+    -- else: assume hyprpm manages the plugin; bindings register once it loads.
 end
 
 -- Fresh start on every (re)load so chords are not registered twice.

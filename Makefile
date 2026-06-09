@@ -1,68 +1,62 @@
 # Hyprmacs — native Hyprland plugin (Hyprland 0.55.x)
 #
-# Targets:
-#   make            build the plugin -> build/hyprmacs.so
-#   make test       build & run the standalone chord state-machine simulation
-#   make install    copy build/hyprmacs.so to $(INSTALL_DIR)
+#   make            build ./hyprmacs.so (default; this is what hyprpm runs)
+#   make test       build & run the standalone chord simulation (no Hyprland)
+#   make install    alias for `make all` — builds ./hyprmacs.so in the repo dir
 #   make clean
+#
+# hyprpm builds with `pkg-config hyprland` on its managed PKG_CONFIG_PATH.
+# For a manual build against a Hyprland checkout, pass HYPRLAND_SRC:
+#   make HYPRLAND_SRC=/tmp/Hyprland
 
-CXX        ?= g++
-CXXSTD     ?= -std=c++26
+CXX ?= g++
+HYPRLAND_SRC ?=
 
-# Hyprland plugins must be built against the running Hyprland's headers and the
-# same toolchain/ABI. The 'hyprland' pkg-config pulls in every transitive dep.
-# Hyprland 0.55 embeds PUC Lua 5.5 (NOT LuaJIT); the plugin must use the very
-# same Lua so it shares Hyprland's lua_State and registry index.
-PLUGIN_PKGS = hyprland lua
-PLUGIN_CFLAGS  = $(shell pkg-config --cflags $(PLUGIN_PKGS))
+TARGET = hyprmacs.so
+SRCS   = src/KeyParser.cpp src/PrefixTree.cpp src/ChordStateMachine.cpp src/Plugin.cpp
 
-WARN       = -Wall -Wextra -Wno-unused-parameter
-COMMON     = $(CXXSTD) $(WARN) -fPIC
+# Hyprland is built with C++26; plugins must match.
+CXXFLAGS += -shared -fPIC -std=c++26 -O2 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers
 
-INSTALL_DIR ?= $(HOME)/.config/hypr/plugins
+INCLUDES = $(shell pkg-config --cflags --keep-system-cflags hyprland 2>/dev/null)
+ifneq ($(strip $(HYPRLAND_SRC)),)
+INCLUDES += -I$(HYPRLAND_SRC) -I$(HYPRLAND_SRC)/protocols
+endif
 
-BUILD      = build
-CORE_SRC   = src/KeyParser.cpp src/PrefixTree.cpp src/ChordStateMachine.cpp
-CORE_OBJ   = $(CORE_SRC:src/%.cpp=$(BUILD)/%.o)
-PLUGIN_SRC = src/Plugin.cpp
-PLUGIN_OBJ = $(PLUGIN_SRC:src/%.cpp=$(BUILD)/plugin_%.o)
+# Hyprland 0.55 embeds PUC Lua 5.5 (NOT LuaJIT). Build against the same Lua so
+# the plugin shares Hyprland's lua_State and registry index.
+LUA_CFLAGS := $(shell pkg-config --cflags lua 2>/dev/null || pkg-config --cflags lua5.5 2>/dev/null || pkg-config --cflags lua-5.5 2>/dev/null || pkg-config --cflags lua5.4 2>/dev/null)
+LUA_LIBS   := $(shell pkg-config --libs   lua 2>/dev/null || pkg-config --libs   lua5.5 2>/dev/null || pkg-config --libs   lua-5.5 2>/dev/null || pkg-config --libs   lua5.4 2>/dev/null)
 
-PLUGIN_SO  = $(BUILD)/hyprmacs.so
+PKG_CFLAGS := $(INCLUDES) $(LUA_CFLAGS) $(shell pkg-config --cflags xkbcommon)
+PKG_LIBS   := $(LUA_LIBS) $(shell pkg-config --libs xkbcommon)
 
-.PHONY: all plugin test install clean
+.PHONY: all install test clean check-hyprland-src check-deps
 
-all: plugin
+all: check-hyprland-src check-deps $(TARGET)
 
-plugin: $(PLUGIN_SO)
+install: all
 
-# --- plugin objects (need Hyprland headers) -------------------------------
-$(BUILD)/plugin_%.o: src/%.cpp | $(BUILD)
-	$(CXX) $(COMMON) $(PLUGIN_CFLAGS) -c $< -o $@
+check-hyprland-src:
+	@if test -n "$(HYPRLAND_SRC)"; then test -f "$(HYPRLAND_SRC)/src/plugins/PluginAPI.hpp" || \
+		(printf 'HYPRLAND_SRC must point to a Hyprland source tree. Current: %s\n' "$(HYPRLAND_SRC)" >&2; exit 1); \
+	fi
 
-# core objects are compiled twice: once for the plugin (with Hyprland include
-# paths available, though they don't need them) and once for the test harness.
-$(BUILD)/%.o: src/%.cpp | $(BUILD)
-	$(CXX) $(COMMON) $(PLUGIN_CFLAGS) -c $< -o $@
+check-deps:
+	@if test -z "$(HYPRLAND_SRC)"; then pkg-config --exists hyprland || \
+		(printf 'Missing Hyprland headers. Run `hyprpm update`, or set PKG_CONFIG_PATH to a dir with hyprland.pc, or pass HYPRLAND_SRC.\n' >&2; exit 1); \
+	fi
 
-$(PLUGIN_SO): $(CORE_OBJ) $(PLUGIN_OBJ)
-	$(CXX) $(COMMON) -shared $^ -o $@ $(shell pkg-config --libs xkbcommon lua)
-	@echo "built $(PLUGIN_SO)"
+$(TARGET): $(SRCS)
+	$(CXX) $(CXXFLAGS) $(PKG_CFLAGS) $(SRCS) -o $@ $(PKG_LIBS)
+	@echo "built ./$(TARGET)"
 
-# --- standalone test harness (no Hyprland needed, only xkbcommon) ---------
-test: $(BUILD)
-	$(CXX) $(CXXSTD) $(WARN) -Isrc \
+# Standalone engine simulation — needs only xkbcommon, never Hyprland.
+test:
+	$(CXX) -std=c++26 -O2 -Wall -Wextra -Isrc \
 		src/KeyParser.cpp src/PrefixTree.cpp src/ChordStateMachine.cpp tests/sim.cpp \
-		$(shell pkg-config --cflags --libs xkbcommon) \
-		-o $(BUILD)/sim
-	@echo "== running chord state-machine simulation ==" && $(BUILD)/sim
-
-install: $(PLUGIN_SO)
-	mkdir -p $(INSTALL_DIR)
-	cp $(PLUGIN_SO) $(INSTALL_DIR)/hyprmacs.so
-	@echo "installed to $(INSTALL_DIR)/hyprmacs.so"
-
-$(BUILD):
-	mkdir -p $(BUILD)
+		$(shell pkg-config --cflags --libs xkbcommon) -o sim
+	@echo "== running chord state-machine simulation ==" && ./sim
 
 clean:
-	rm -rf $(BUILD)
+	rm -f $(TARGET) sim

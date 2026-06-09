@@ -12,14 +12,14 @@
 #include "KeyParser.hpp"
 #include "PrefixTree.hpp"
 
-#include <hyprland/src/plugins/PluginAPI.hpp>
-#include <hyprland/src/Compositor.hpp>
-#include <hyprland/src/devices/IKeyboard.hpp>
-#include <hyprland/src/managers/KeybindManager.hpp>
-#include <hyprland/src/managers/SessionLockManager.hpp>
-#include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
-#include <hyprland/src/managers/eventLoop/EventLoopTimer.hpp>
-#include <hyprland/src/version.h>
+#include <src/plugins/PluginAPI.hpp>
+#include <src/Compositor.hpp>
+#include <src/devices/IKeyboard.hpp>
+#include <src/managers/KeybindManager.hpp>
+#include <src/managers/SessionLockManager.hpp>
+#include <src/managers/eventLoop/EventLoopManager.hpp>
+#include <src/managers/eventLoop/EventLoopTimer.hpp>
+#include <src/version.h>
 
 #include <xkbcommon/xkbcommon.h>
 
@@ -272,13 +272,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     }
     if (!addr) {
         HyprlandAPI::addNotification(handle, "[hyprmacs] could not find onKeyEvent to hook; chords disabled", CHyprColor(0.9f, 0.2f, 0.2f, 1.0f), 10000);
-        return {"hyprmacs", "Emacs-like key chords (FAILED to hook)", "lobo", "1.0"};
+        return {"hyprmacs", "Emacs-like key chords (FAILED to hook)", "11xx", "1.0"};
     }
 
     g_keyHook = HyprlandAPI::createFunctionHook(handle, addr, rc<void*>(&hkOnKeyEvent));
     if (!g_keyHook || !g_keyHook->hook()) {
         HyprlandAPI::addNotification(handle, "[hyprmacs] failed to install onKeyEvent hook; chords disabled", CHyprColor(0.9f, 0.2f, 0.2f, 1.0f), 10000);
-        return {"hyprmacs", "Emacs-like key chords (FAILED to hook)", "lobo", "1.0"};
+        return {"hyprmacs", "Emacs-like key chords (FAILED to hook)", "11xx", "1.0"};
     }
 
     HyprlandAPI::addLuaFunction(handle, "hyprmacs", "register", &hm_register);
@@ -286,7 +286,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addLuaFunction(handle, "hyprmacs", "clear", &hm_clear);
 
     logmsg("loaded; hl.plugin.hyprmacs.{register,configure,clear} available");
-    return {"hyprmacs", "Emacs-like, modifier-aware key chords for Hyprland", "lobo", "1.0"};
+    return {"hyprmacs", "Emacs-like, modifier-aware key chords for Hyprland", "11xx", "1.0"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {

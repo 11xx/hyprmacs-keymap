@@ -1,0 +1,13 @@
+[repository]
+# Repository name. Shown by `hyprpm list`; used by `hyprpm remove`.
+name = "hyprmacs-keymap"
+authors = ["11xx"]
+
+# Plugin name. This is what `hyprpm list`/`hyprpm enable` use.
+[hyprmacs]
+description = "Emacs-like, modifier-aware key chords for Hyprland"
+authors = ["11xx"]
+output = "hyprmacs.so"
+build = [
+  "make all"
+]

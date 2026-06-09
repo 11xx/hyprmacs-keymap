@@ -2,7 +2,7 @@
 build/
 *.o
 *.so
-tests/sim
+/sim
 compile_commands.json
 
 # editor

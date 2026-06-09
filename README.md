@@ -72,24 +72,57 @@ Requires the matching Hyprland dev headers (the `hyprland` pkg-config, provided
 by `hyprpm`/your distro) and the same toolchain Hyprland was built with.
 
 ```sh
-make            # -> build/hyprmacs.so
+make            # -> ./hyprmacs.so   (default; also what hyprpm runs)
 make test       # build & run the standalone chord simulation (no Hyprland needed)
-make install    # copy to ~/.config/hypr/plugins/hyprmacs.so
+make install    # alias for `make all` (builds ./hyprmacs.so in the repo dir)
+make HYPRLAND_SRC=/tmp/Hyprland   # build against a Hyprland checkout instead
 ```
 
 > Hyprland 0.55 embeds **PUC Lua 5.5** (not LuaJIT). The Makefile builds against
 > `pkg-config lua` so the plugin shares Hyprland's `lua_State`. Rebuild whenever
 > Hyprland updates — plugin ABI is tied to the exact Hyprland commit.
 
+## Install
+
+### With hyprpm (recommended)
+
+`hyprmacs-keymap` is the repository name; `hyprmacs` is the plugin name in
+`hyprpm list`/`enable`.
+
+```sh
+hyprpm update
+hyprpm add file:///path/to/hyprmacs-keymap   # or a remote URL
+hyprpm enable hyprmacs
+hyprpm reload
+```
+
+hyprpm builds (`make all`) and loads the plugin for you. **Do not** call
+`hl.plugin.load` in your config in this mode — the shim detects that the plugin
+is already loaded and skips self-loading.
+
+### Manual / local
+
+```sh
+make                                  # -> ./hyprmacs.so
+hyprctl plugin load "$PWD/hyprmacs.so"   # try it in the running session
+```
+
+For config-managed loading without hyprpm, point the shim at the `.so`:
+
+```lua
+HYPRMACS_SO = "/path/to/hyprmacs-keymap/hyprmacs.so"
+require("hyprmacs")
+```
+
+If `HYPRMACS_SO` is unset, the shim also auto-loads
+`~/.config/hypr/plugins/hyprmacs.so` when that file exists.
+
 ## Migration from the old Lua helper
 
 The plugin keeps the **same public API**, so migration is two line changes.
 
-1. Build & install the plugin:
-
-   ```sh
-   make install   # ~/.config/hypr/plugins/hyprmacs.so
-   ```
+1. Install the plugin (see **Install** above — hyprpm, or build `./hyprmacs.so`
+   and set `HYPRMACS_SO`).
 
 2. In your Lua config, replace the helper require with the shim. In
    `hyprland.lua`:
@@ -100,8 +133,8 @@ The plugin keeps the **same public API**, so migration is two line changes.
    ```
 
    Copy `hyprmacs.lua` next to your other config modules (e.g.
-   `~/.config/hypr/hyprmacs.lua`). It calls `hl.plugin.load(...)` for you and
-   re-defines the global API.
+   `~/.config/hypr/hyprmacs.lua`). It loads the plugin (or, under hyprpm,
+   detects it is already loaded) and re-defines the global API.
 
 3. Everything in `keybinds.lua` stays the same:
    `keymap_set`, `keymap_exec`, `keymap_configure`, `bind`, `bind_exec`,
@@ -111,9 +144,6 @@ On first evaluation the plugin is still being queued, so the binding calls are
 no-ops; Hyprland loads the plugin and reloads the config, and on that second
 pass everything registers. A manual `hyprctl reload` re-registers cleanly (the
 plugin clears its previous state).
-
-If the `.so` is elsewhere, set `HYPRMACS_SO = "/path/to/hyprmacs.so"` before
-`require("hyprmacs")`.
 
 Keep `hyprmacs-keymap.org`/`.lua` until you have verified the plugin in a live
 session — `reference/` holds a snapshot either way.
@@ -171,4 +201,9 @@ prefix and a final (always an error).
 | `src/Plugin.cpp` | Hyprland glue: key-event hook + `hl.plugin.hyprmacs.*`. |
 | `tests/sim.cpp` | Standalone simulation harness for chord transitions. |
 | `hyprmacs.lua` | Lua shim preserving the `keymap_set`/`keymap_exec` API. |
+| `hyprpm.toml` | hyprpm package manifest. |
 | `reference/` | Snapshot of the original Org/Lua implementation. |
+
+## License
+
+Public domain — see [`UNLICENSE`](UNLICENSE).
