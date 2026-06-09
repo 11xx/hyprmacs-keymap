@@ -141,14 +141,20 @@ tree. Per key:
 
 ### Commit timing
 
-A final binding **without modifiers** commits immediately on press.
+Matching is **eager**, like Emacs: a binding fires the instant the key sequence
+completes a final binding — on key-**down**, even if modifiers are still held.
+The engine only waits while the current sequence is a *prefix* of a longer one.
+Since a sequence can't be both a prefix and a final binding, there's never any
+ambiguity about whether to fire now or wait.
 
-A final binding **with modifiers** is recognised at press time but committed
-only when either (a) another non-modifier key starts the next chord, or (b) all
-of the chord's modifiers are released. This makes overlapping chords
-deterministic: holding `Super+Alt` and tapping `Print` locks in `s-M-print`;
-releasing the modifiers in any order commits `s-M-print` and never downgrades it
-to `M-print`.
+So `keymap_set("s-x s-c", …)` runs the moment `c` goes down (with Super still
+held); you don't have to release anything. Holding `Super+Alt` and pressing
+`Print` fires `s-M-print` immediately — the modifiers held *at the key press*
+pick the chord, so `s-M-print` and `M-print` stay distinct with no downgrades.
+
+If a binding is registered more than once it runs every action in registration
+order (handy for chaining); set `strict_duplicates = true` to forbid that and
+keep bindings single/unitary.
 
 ## Testing
 

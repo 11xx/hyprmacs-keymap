@@ -3,15 +3,20 @@
 // modifier and non-modifier keys) and produces, per event, a decision to
 // suppress the key and/or commit one or more actions.
 //
-// See reference/hyprmacs-keymap.org for the behaviour being preserved and
-// docs in README.md for the commit rules. The engine tracks held modifiers
-// itself, so it is fully deterministic and testable without Hyprland.
+// Matching is eager, like Emacs: a binding fires the instant the key sequence
+// is complete (a final binding), even if modifiers are still held. The engine
+// only waits while the current sequence is a prefix of a longer one. Because a
+// sequence can never be both a prefix and a final binding, there is never
+// ambiguity about whether to fire now or wait.
+//
+// See README.md for the rules and reference/hyprmacs-keymap.org for the prior
+// behaviour. The engine tracks held modifiers itself, so it is fully
+// deterministic and testable without Hyprland.
 #pragma once
 
 #include "Core.hpp"
 #include "PrefixTree.hpp"
 
-#include <optional>
 #include <set>
 #include <vector>
 
@@ -39,28 +44,21 @@ class ChordStateMachine {
     // activity has happened since the timer was armed (generation guard).
     void timeoutReset(uint64_t armedGeneration);
 
-    // Drop all transient state (held mods, pending, position). Used on reload.
+    // Drop all transient state (held mods, position). Used on reload.
     void reset();
 
     Mods     heldMods() const { return m_held; }
     bool     awaitingNextChord() const { return m_current != m_tree->root(); }
-    bool     hasPending() const { return m_pending.has_value(); }
     uint64_t generation() const { return m_gen; }
 
   private:
-    struct Pending {
-        std::vector<ActionId> actions;
-        Mods                  chordMods = 0;
-    };
+    void gotoRoot(); // move to idle, bump generation
 
-    void gotoRoot(); // move to idle, bump generation (does NOT touch pending)
-
-    const PrefixTree*      m_tree;
-    const Node*            m_current;
-    Mods                   m_held = 0;
-    std::optional<Pending> m_pending;
-    std::set<Keysym>       m_consumedDown; // non-mod presses we suppressed
-    uint64_t               m_gen = 0;
+    const PrefixTree* m_tree;
+    const Node*       m_current;
+    Mods              m_held = 0;
+    std::set<Keysym>  m_consumedDown; // non-mod presses we suppressed
+    uint64_t          m_gen = 0;
 };
 
 } // namespace hyprmacs

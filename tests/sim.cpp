@@ -158,26 +158,32 @@ int main() {
         expectSeq("req2 s-print then s-d matches s-print s-d", s.committed, {"super-d"});
     }
 
-    // === Requirement 3: overlapping modifier chords commit correctly =======
-    for (const bool superFirst : {true, false}) {
+    // === Overlapping modifier chords: resolved by the modifiers held at the
+    //     key press, and fired eagerly on that press. =========================
+    {
         Sim s;
         s.reg("M-print", "M-print");
         s.reg("s-M-print", "s-M-print");
         s.rebuildEngine();
         s.modDown(MOD_SUPER);
         s.modDown(MOD_ALT);
-        s.tap("print"); // recognised as s-M-print
-        // keep holding, then release mods in the chosen order
-        if (superFirst) {
-            s.modUp(MOD_SUPER);
-            expectSeq(std::string("req3 no commit/downgrade after super-up (") + (superFirst ? "super-first" : "alt-first") + ")", s.committed, {});
-            s.modUp(MOD_ALT);
-        } else {
-            s.modUp(MOD_ALT);
-            expectSeq("req3 no commit/downgrade after alt-up (alt-first)", s.committed, {});
-            s.modUp(MOD_SUPER);
-        }
-        expectSeq(std::string("req3 commit s-M-print (") + (superFirst ? "super-first" : "alt-first") + ")", s.committed, {"s-M-print"});
+        auto r = s.keyDown("print"); // held = {s,M}
+        expectSeq("s-M-print fires on press while mods held", s.committed, {"s-M-print"});
+        expectBool("print captured", r.suppress, true);
+        s.keyUp("print");
+        s.modUp(MOD_SUPER);
+        s.modUp(MOD_ALT);
+        expectSeq("nothing extra fires on modifier release", s.committed, {"s-M-print"});
+    }
+    {
+        Sim s;
+        s.reg("M-print", "M-print");
+        s.reg("s-M-print", "s-M-print");
+        s.rebuildEngine();
+        s.modDown(MOD_ALT); // only Alt held
+        s.tap("print");
+        expectSeq("M-print fires with only Alt held (no downgrade confusion)", s.committed, {"M-print"});
+        s.modUp(MOD_ALT);
     }
 
     // === Requirement 4: multi-chord after a modified prefix while held ======
@@ -193,6 +199,21 @@ int main() {
         s.tap("a"); // super still held -> s-a
         s.modUp(MOD_SUPER);
         expectSeq("req4 s-M-f then s-a", s.committed, {"smf-sa"});
+    }
+
+    // === Eager: a final sub-chord fires on key-down while modifiers stay held
+    {
+        Sim s;
+        s.reg("s-x s-c", "close");
+        s.rebuildEngine();
+        s.modDown(MOD_SUPER);
+        s.tap("x");              // prefix s-x; Super stays held
+        auto r = s.keyDown("c"); // s-c is final -> commit NOW, Super still held
+        expectSeq("eager: s-x s-c fires on c-down with Super held", s.committed, {"close"});
+        expectBool("eager: c captured", r.suppress, true);
+        s.keyUp("c");
+        s.modUp(MOD_SUPER);
+        expectSeq("eager: nothing extra after Super release", s.committed, {"close"});
     }
 
     // === Extra: plain (unmodified) leaf commits immediately ================

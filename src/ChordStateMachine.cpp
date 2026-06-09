@@ -10,7 +10,6 @@ void ChordStateMachine::gotoRoot() {
 void ChordStateMachine::reset() {
     m_current = m_tree->root();
     m_held    = 0;
-    m_pending.reset();
     m_consumedDown.clear();
     ++m_gen;
 }
@@ -25,39 +24,26 @@ StepResult ChordStateMachine::step(const StepInput& in) {
     StepResult r;
 
     // ---- modifier key -----------------------------------------------------
+    // Just track it and let it through; modifiers never fire or block a chord.
     if (in.modBit != 0) {
-        if (in.pressed) {
+        if (in.pressed)
             m_held |= in.modBit;
-        } else {
+        else
             m_held &= ~in.modBit;
-            // Commit a deferred modified leaf once *all* of its modifiers are
-            // released — order-independent, and never downgrades the chord.
-            if (m_pending && (m_pending->chordMods & m_held) == 0) {
-                r.commits = m_pending->actions;
-                m_pending.reset();
-            }
-        }
-        r.suppress = false; // modifiers always pass through
+        r.suppress = false;
         return r;
     }
 
     // ---- non-modifier release --------------------------------------------
+    // Suppress the release iff we suppressed the matching press, keeping
+    // press/release symmetric for clients.
     if (!in.pressed) {
-        // Suppress the release iff we suppressed the matching press, keeping
-        // press/release symmetric for clients.
         r.suppress = (m_consumedDown.erase(in.sym) > 0);
         return r;
     }
 
     // ---- non-modifier press ----------------------------------------------
-    // A new non-mod key starts the next chord, which flushes any pending
-    // (already-recognised) modified leaf first.
-    if (m_pending) {
-        r.commits   = m_pending->actions;
-        m_pending.reset();
-        // current is already root whenever a pending exists
-    }
-
+    // The chord is (modifiers held right now) + this key.
     const Node* child = m_current->child(Chord{m_held, in.sym});
 
     if (!child) {
@@ -73,29 +59,22 @@ StepResult ChordStateMachine::step(const StepInput& in) {
         return r;
     }
 
-    if (child->isPrefix()) {
-        m_current = child;
-        ++m_gen;
-        r.suppress = true;
-        m_consumedDown.insert(in.sym);
-        return r;
-    }
-
-    // Final binding.
     r.suppress = true;
     m_consumedDown.insert(in.sym);
 
-    if (m_held != 0) {
-        // Defer: recognised now, committed on modifier-release or next non-mod
-        // key. gotoRoot so a fresh sequence can begin while mods stay held.
-        m_pending = Pending{child->actions, m_held};
-        gotoRoot();
-    } else {
-        // No modifiers to wait on: commit immediately.
-        for (ActionId a : child->actions)
-            r.commits.push_back(a);
-        gotoRoot();
+    if (child->isPrefix()) {
+        // More keys can follow — advance and wait for the next chord.
+        m_current = child;
+        ++m_gen;
+        return r;
     }
+
+    // Final binding — eager commit on key-down, even with modifiers still held.
+    // A node is never both a prefix and a final, so this is unambiguous. All
+    // actions registered on this binding run in order.
+    for (ActionId a : child->actions)
+        r.commits.push_back(a);
+    gotoRoot();
     return r;
 }
 

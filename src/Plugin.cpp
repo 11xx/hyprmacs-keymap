@@ -235,7 +235,7 @@ int hm_configure(lua_State* L) {
     lua_pop(L, 1);
 
     // modified_leaf_commit_delay_ms is accepted for backward compatibility but
-    // ignored: commit timing is now deterministic (modifier-release driven).
+    // ignored: matching is eager now (a final binding fires on key-down).
     return 0;
 }
 
