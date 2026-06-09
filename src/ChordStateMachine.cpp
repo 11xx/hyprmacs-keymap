@@ -9,6 +9,7 @@ void ChordStateMachine::gotoRoot() {
 
 void ChordStateMachine::reset() {
     m_current = m_tree->root();
+    m_held    = 0;
     m_consumedDown.clear();
     ++m_gen;
 }
@@ -22,7 +23,19 @@ void ChordStateMachine::timeoutReset(uint64_t armedGeneration) {
 StepResult ChordStateMachine::step(const StepInput& in) {
     StepResult r;
 
-    // ---- key release ------------------------------------------------------
+    // ---- modifier key -----------------------------------------------------
+    // Track it from the event stream (race-free) and let it through. Modifiers
+    // never fire or block a chord.
+    if (in.modBit != 0) {
+        if (in.pressed)
+            m_held |= in.modBit;
+        else
+            m_held &= ~in.modBit;
+        r.suppress = false;
+        return r;
+    }
+
+    // ---- non-modifier release --------------------------------------------
     // Suppress the release iff we suppressed the matching press, keeping
     // press/release symmetric for clients.
     if (!in.pressed) {
@@ -30,9 +43,9 @@ StepResult ChordStateMachine::step(const StepInput& in) {
         return r;
     }
 
-    // ---- key press --------------------------------------------------------
+    // ---- non-modifier press ----------------------------------------------
     // The chord is (modifiers held right now) + this key.
-    const Node* child = m_current->child(Chord{in.mods, in.sym});
+    const Node* child = m_current->child(Chord{m_held, in.sym});
 
     if (!child) {
         const bool atRoot = (m_current == m_tree->root());

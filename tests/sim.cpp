@@ -42,7 +42,6 @@ struct Sim {
 
     std::vector<std::string> committed; // accumulated across feed()
     bool                     lastSuppress = false;
-    Mods                     held         = 0; // test-side: modifiers currently held
 
     StepResult feed(const StepInput& in) {
         auto r       = sm.step(in);
@@ -52,14 +51,12 @@ struct Sim {
         return r;
     }
 
-    // event helpers. modDown/modUp only update the test's notion of held
-    // modifiers (the engine is fed the held mask with each key press, mirroring
-    // how the plugin reads getModsFromAllKBs()); modifiers are never fed to the
-    // engine directly.
-    void       modDown(Mods m) { held |= m; }
-    void       modUp(Mods m) { held &= ~m; }
-    StepResult keyDown(const std::string& name) { return feed({resolveKeyName(name), held, true}); }
-    void       keyUp(const std::string& name) { feed({resolveKeyName(name), held, false}); }
+    // event helpers. Modifier events are fed to the engine (modBit != 0) so it
+    // tracks held state from the stream, exactly like the plugin does.
+    void       modDown(Mods m) { feed({0, m, true}); }
+    void       modUp(Mods m) { feed({0, m, false}); }
+    StepResult keyDown(const std::string& name) { return feed({resolveKeyName(name), 0, true}); }
+    void       keyUp(const std::string& name) { feed({resolveKeyName(name), 0, false}); }
     void       tap(const std::string& name) {
         keyDown(name);
         keyUp(name);

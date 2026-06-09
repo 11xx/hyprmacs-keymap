@@ -152,28 +152,28 @@ bool hkOnKeyEvent(void* thisptr, std::any event, SP<IKeyboard> keyboard) {
     } catch (...) { return passThrough(); }
 
     const uint32_t KEYCODE = e.keycode + 8; // libinput -> xkb offset
+    const bool     pressed = (e.state == WL_KEYBOARD_KEY_STATE_PRESSED);
 
-    // Modifier keys are not chord keys: let them through untouched. Their state
-    // is read authoritatively below via getModsFromAllKBs().
-    if (g_pKeybindManager->keycodeToModifier(KEYCODE) != 0)
-        return passThrough();
+    // Classify as a modifier from the event itself (race-free) and feed the
+    // engine the whole key stream so it tracks held modifiers deterministically.
+    const Mods modBit = static_cast<Mods>(g_pKeybindManager->keycodeToModifier(KEYCODE)) & MOD_ALL;
 
-    const bool   pressed = (e.state == WL_KEYBOARD_KEY_STATE_PRESSED);
-    xkb_state*   st      = keyboard->m_xkbSymState ? keyboard->m_xkbSymState : keyboard->m_xkbStaticState;
-    const Keysym sym     = st ? canonicaliseSym(static_cast<Keysym>(xkb_state_key_get_one_sym(st, KEYCODE))) : 0;
+    Keysym sym = 0;
+    if (modBit == 0) {
+        xkb_state* st = keyboard->m_xkbSymState ? keyboard->m_xkbSymState : keyboard->m_xkbStaticState;
+        if (st)
+            sym = canonicaliseSym(static_cast<Keysym>(xkb_state_key_get_one_sym(st, KEYCODE)));
+    }
 
-    // Authoritative modifier mask (same source Hyprland uses for its own binds),
-    // so chords match regardless of how modifiers reach the compositor.
-    const Mods mods = static_cast<Mods>(g_pInputManager->getModsFromAllKBs()) & MOD_ALL;
-
-    const StepResult r = g_sm.step(StepInput{sym, mods, pressed});
+    const StepResult r = g_sm.step(StepInput{sym, modBit, pressed});
 
     if (g_cfg.debug) {
         char name[64] = {0};
         if (sym)
             xkb_keysym_get_name(static_cast<xkb_keysym_t>(sym), name, sizeof(name));
-        dbg("%s sym=%s(0x%x) mods=0x%x suppress=%d commits=%zu", pressed ? "down" : "up  ", sym ? name : "-", static_cast<unsigned>(sym), static_cast<unsigned>(mods),
-            static_cast<int>(r.suppress), r.commits.size());
+        const Mods kbs = static_cast<Mods>(g_pInputManager->getModsFromAllKBs()) & MOD_ALL; // cross-check
+        dbg("%s sym=%s(0x%x) modBit=0x%x held=0x%x kbs=0x%x suppress=%d commits=%zu", pressed ? "down" : "up  ", sym ? name : "-", static_cast<unsigned>(sym),
+            static_cast<unsigned>(modBit), static_cast<unsigned>(g_sm.heldMods()), static_cast<unsigned>(kbs), static_cast<int>(r.suppress), r.commits.size());
     }
 
     for (ActionId a : r.commits)
@@ -331,13 +331,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     }
     if (!addr) {
         HyprlandAPI::addNotification(handle, "[hyprmacs-keymap] could not find onKeyEvent to hook; chords disabled", CHyprColor(0.9f, 0.2f, 0.2f, 1.0f), 10000);
-        return {"hyprmacs-keymap", "Emacs-like key chords (FAILED to hook)", "11xx", "1.3"};
+        return {"hyprmacs-keymap", "Emacs-like key chords (FAILED to hook)", "11xx", "1.4"};
     }
 
     g_keyHook = HyprlandAPI::createFunctionHook(handle, addr, rc<void*>(&hkOnKeyEvent));
     if (!g_keyHook || !g_keyHook->hook()) {
         HyprlandAPI::addNotification(handle, "[hyprmacs-keymap] failed to install onKeyEvent hook; chords disabled", CHyprColor(0.9f, 0.2f, 0.2f, 1.0f), 10000);
-        return {"hyprmacs-keymap", "Emacs-like key chords (FAILED to hook)", "11xx", "1.3"};
+        return {"hyprmacs-keymap", "Emacs-like key chords (FAILED to hook)", "11xx", "1.4"};
     }
 
     HyprlandAPI::addLuaFunction(handle, "hyprmacs_keymap", "register", &hm_register);
@@ -345,7 +345,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addLuaFunction(handle, "hyprmacs_keymap", "clear", &hm_clear);
 
     logmsg("loaded; hl.plugin.hyprmacs_keymap.{register,configure,clear} available");
-    return {"hyprmacs-keymap", "Emacs-like, modifier-aware key chords for Hyprland", "11xx", "1.3"};
+    return {"hyprmacs-keymap", "Emacs-like, modifier-aware key chords for Hyprland", "11xx", "1.4"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
