@@ -23,17 +23,22 @@
 
 namespace hyprmacs {
 
-// One key event fed to the engine. modBit is non-zero iff this key IS a
-// modifier (its bit, masked to MOD_ALL); such events only update held state.
+// One key event fed to the engine. isModifier marks events for keys that ARE
+// modifiers; they only update held state and always pass through. modBit is
+// the chord bit of such a key, masked to MOD_ALL — it may be 0 for modifiers
+// with no chord bit (AltGr, locks), which update nothing but must not abort a
+// sequence in progress.
 struct StepInput {
-    Keysym sym     = 0; // resolved + canonicalised keysym (ignored when modBit!=0)
-    Mods   modBit  = 0;
-    bool   pressed = false;
+    Keysym  sym        = 0; // resolved + canonicalised keysym (0 if unresolvable)
+    Keycode code       = 0; // xkb keycode, for "code:NN" chords & release tracking
+    Mods    modBit     = 0;
+    bool    isModifier = false;
+    bool    pressed    = false;
 };
 
 struct StepResult {
-    bool                  suppress = false; // true => consume the key event
-    std::vector<ActionId> commits;          // actions to run now, in order
+    bool                suppress = false; // true => consume the key event
+    std::vector<Action> commits;          // actions to run now, in order
 };
 
 class ChordStateMachine {
@@ -59,7 +64,7 @@ class ChordStateMachine {
     const PrefixTree* m_tree;
     const Node*       m_current;
     Mods              m_held = 0;
-    std::set<Keysym>  m_consumedDown; // non-mod presses we suppressed
+    std::set<Keycode> m_consumedDown; // keycodes of non-mod presses we suppressed
     uint64_t          m_gen = 0;
 };
 

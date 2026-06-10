@@ -25,7 +25,7 @@ struct Sim {
     ChordStateMachine        sm{&tree};
 
     // register a sequence; returns the action label assigned
-    std::string reg(const std::string& seq, const std::string& label, bool strict = false) {
+    std::string reg(const std::string& seq, const std::string& label, bool strict = false, bool repeating = false) {
         auto p = parseSequence(seq);
         if (!p.ok) {
             std::cerr << "  parse error for \"" << seq << "\": " << p.error << "\n";
@@ -34,7 +34,7 @@ struct Sim {
         }
         const ActionId id = static_cast<ActionId>(labels.size());
         labels.push_back(label);
-        tree.insert(p.chords, id, strict);
+        tree.insert(p.chords, Action{id, repeating}, strict);
         return label;
     }
 
@@ -46,21 +46,32 @@ struct Sim {
     StepResult feed(const StepInput& in) {
         auto r       = sm.step(in);
         lastSuppress = r.suppress;
-        for (ActionId a : r.commits)
-            committed.push_back(labels[a]);
+        for (const Action& a : r.commits)
+            committed.push_back(labels[a.id]);
         return r;
     }
 
-    // event helpers. Modifier events are fed to the engine (modBit != 0) so it
-    // tracks held state from the stream, exactly like the plugin does.
-    void       modDown(Mods m) { feed({0, m, true}); }
-    void       modUp(Mods m) { feed({0, m, false}); }
-    StepResult keyDown(const std::string& name) { return feed({resolveKeyName(name), 0, true}); }
-    void       keyUp(const std::string& name) { feed({resolveKeyName(name), 0, false}); }
-    void       tap(const std::string& name) {
+    // event helpers. Modifier events are fed to the engine (isModifier) so it
+    // tracks held state from the stream, exactly like the plugin does. Key
+    // events carry a pseudo-keycode (the keysym value) so press/release
+    // tracking by keycode works like in the plugin.
+    void       modDown(Mods m) { feed({0, 0, m, true, true}); }
+    void       modUp(Mods m) { feed({0, 0, m, true, false}); }
+    StepResult keyDown(const std::string& name) {
+        const Keysym s = resolveKeyName(name);
+        return feed({s, s, 0, false, true});
+    }
+    void keyUp(const std::string& name) {
+        const Keysym s = resolveKeyName(name);
+        feed({s, s, 0, false, false});
+    }
+    void tap(const std::string& name) {
         keyDown(name);
         keyUp(name);
     }
+    // a key event by raw keycode (sym unresolvable or unbound)
+    StepResult codeDown(Keycode c, Keysym sym = 0) { return feed({sym, c, 0, false, true}); }
+    void       codeUp(Keycode c, Keysym sym = 0) { feed({sym, c, 0, false, false}); }
 };
 
 std::string join(const std::vector<std::string>& v) {
@@ -267,22 +278,22 @@ int main() {
         PrefixTree t;
         auto       a = parseSequence("s-x");
         auto       b = parseSequence("s-x f");
-        expectBool("insert s-x leaf ok", t.insert(a.chords, 0, false) == InsertStatus::OK, true);
-        expectBool("prefix-over-final rejected", t.insert(b.chords, 1, false) == InsertStatus::ErrPrefixOverFinal, true);
+        expectBool("insert s-x leaf ok", t.insert(a.chords, Action{0, false}, false) == InsertStatus::OK, true);
+        expectBool("prefix-over-final rejected", t.insert(b.chords, Action{1, false}, false) == InsertStatus::ErrPrefixOverFinal, true);
     }
     {
         PrefixTree t;
         auto       a = parseSequence("s-x f");
         auto       b = parseSequence("s-x");
-        expectBool("insert s-x f ok", t.insert(a.chords, 0, false) == InsertStatus::OK, true);
-        expectBool("final-over-prefix rejected", t.insert(b.chords, 1, false) == InsertStatus::ErrFinalOverPrefix, true);
+        expectBool("insert s-x f ok", t.insert(a.chords, Action{0, false}, false) == InsertStatus::OK, true);
+        expectBool("final-over-prefix rejected", t.insert(b.chords, Action{1, false}, false) == InsertStatus::ErrFinalOverPrefix, true);
     }
     {
         PrefixTree t;
         auto       a = parseSequence("a");
-        expectBool("first insert ok", t.insert(a.chords, 0, false) == InsertStatus::OK, true);
-        expectBool("dup allowed by default", t.insert(a.chords, 1, false) == InsertStatus::AddedDuplicate, true);
-        expectBool("dup rejected when strict", t.insert(a.chords, 2, true) == InsertStatus::ErrStrictDuplicate, true);
+        expectBool("first insert ok", t.insert(a.chords, Action{0, false}, false) == InsertStatus::OK, true);
+        expectBool("dup allowed by default", t.insert(a.chords, Action{1, false}, false) == InsertStatus::AddedDuplicate, true);
+        expectBool("dup rejected when strict", t.insert(a.chords, Action{2, false}, true) == InsertStatus::ErrStrictDuplicate, true);
     }
 
     // === Extra: parser sanity =============================================
@@ -305,6 +316,111 @@ int main() {
             std::cerr << "FAIL parser raw SUPER + F\n";
             ++g_failures;
         }
+    }
+
+    // === XF86 keysyms with modifiers (both syntaxes) ========================
+    {
+        Sim s;
+        s.reg("s-XF86AudioLowerVolume", "ff-down");
+        s.reg("s-M-XF86AudioRaiseVolume", "game-up");
+        s.reg("SUPER + ALT + XF86AudioLowerVolume", "game-down");
+        s.rebuildEngine();
+        s.modDown(MOD_SUPER);
+        s.tap("XF86AudioLowerVolume");
+        s.modDown(MOD_ALT);
+        s.tap("XF86AudioRaiseVolume");
+        s.tap("XF86AudioLowerVolume");
+        s.modUp(MOD_ALT);
+        s.modUp(MOD_SUPER);
+        s.tap("XF86AudioLowerVolume"); // unmodified: passes through, no commit
+        expectSeq("XF86 syms with mods (emacs + raw syntax)", s.committed, {"ff-down", "game-up", "game-down"});
+        expectBool("bare XF86 key passes through", s.lastSuppress, false);
+    }
+
+    // === code:NN keycode chords =============================================
+    {
+        Sim s;
+        s.reg("s-code:122", "code-chord");
+        s.rebuildEngine();
+        s.modDown(MOD_SUPER);
+        auto r = s.codeDown(122, resolveKeyName("XF86AudioLowerVolume")); // sym unbound -> code matches
+        expectSeq("s-code:122 fires by keycode", s.committed, {"code-chord"});
+        expectBool("code chord captured", r.suppress, true);
+        s.codeUp(122, resolveKeyName("XF86AudioLowerVolume"));
+        expectBool("code chord release also captured", s.lastSuppress, true);
+        s.modUp(MOD_SUPER);
+    }
+    {
+        // keysym binding wins over keycode binding for the same event
+        Sim s;
+        s.reg("s-XF86AudioLowerVolume", "by-sym");
+        s.reg("s-code:122", "by-code");
+        s.rebuildEngine();
+        s.modDown(MOD_SUPER);
+        const Keysym vol = resolveKeyName("XF86AudioLowerVolume");
+        s.feed({vol, 122, 0, false, true});
+        s.feed({vol, 122, 0, false, false});
+        s.modUp(MOD_SUPER);
+        expectSeq("sym chord preferred over code chord", s.committed, {"by-sym"});
+    }
+    {
+        auto p = parseSequence("SUPER + code:122");
+        ++g_checks;
+        if (p.ok && p.chords.size() == 1 && p.chords[0].mods == MOD_SUPER && p.chords[0].sym == 0 && p.chords[0].code == 122)
+            std::cout << "ok   parser raw SUPER + code:122\n";
+        else {
+            std::cerr << "FAIL parser raw SUPER + code:122\n";
+            ++g_failures;
+        }
+        auto q = parseSequence("s-code:122 code:30");
+        ++g_checks;
+        if (q.ok && q.chords.size() == 2 && q.chords[0].code == 122 && q.chords[1].mods == 0 && q.chords[1].code == 30)
+            std::cout << "ok   parser emacs s-code:122 code:30\n";
+        else {
+            std::cerr << "FAIL parser emacs s-code:122 code:30\n";
+            ++g_failures;
+        }
+        auto bad = parseSequence("s-code:abc");
+        expectBool("parser rejects code:abc", bad.ok, false);
+    }
+
+    // === modifier classification by keysym ==================================
+    {
+        Mods bit = 0;
+        expectBool("Super_L classifies as SUPER", modFromKeysym(resolveKeyName("Super_L"), bit) && bit == MOD_SUPER, true);
+        expectBool("Meta_L classifies as ALT", modFromKeysym(resolveKeyName("Meta_L"), bit) && bit == MOD_ALT, true);
+        expectBool("ISO_Level3_Shift is a chord-neutral modifier", modFromKeysym(resolveKeyName("ISO_Level3_Shift"), bit) && bit == 0, true);
+        expectBool("Caps_Lock is a chord-neutral modifier", modFromKeysym(resolveKeyName("Caps_Lock"), bit) && bit == 0, true);
+        expectBool("plain letter is not a modifier", modFromKeysym(resolveKeyName("a"), bit), false);
+    }
+    {
+        // a chord-neutral modifier (AltGr) mid-sequence must not abort it
+        Sim s;
+        s.reg("s-x f", "x-f");
+        s.rebuildEngine();
+        s.modDown(MOD_SUPER);
+        s.tap("x");
+        s.modUp(MOD_SUPER);
+        s.feed({0, 0, 0, true, true});  // AltGr down: modifier, no chord bit
+        s.feed({0, 0, 0, true, false}); // AltGr up
+        s.tap("f");
+        expectSeq("neutral modifier does not abort prefix", s.committed, {"x-f"});
+    }
+
+    // === repeating flag propagates to commits ================================
+    {
+        Sim s;
+        s.reg("s-XF86AudioLowerVolume", "vol", /*strict=*/false, /*repeating=*/true);
+        s.reg("s-a", "once");
+        s.rebuildEngine();
+        s.modDown(MOD_SUPER);
+        auto r1 = s.keyDown("XF86AudioLowerVolume");
+        expectBool("repeating binding commits with repeating=true", r1.commits.size() == 1 && r1.commits[0].repeating, true);
+        s.keyUp("XF86AudioLowerVolume");
+        auto r2 = s.keyDown("a");
+        expectBool("non-repeating binding commits with repeating=false", r2.commits.size() == 1 && !r2.commits[0].repeating, true);
+        s.keyUp("a");
+        s.modUp(MOD_SUPER);
     }
 
     std::cout << "\n" << (g_checks - g_failures) << "/" << g_checks << " checks passed\n";

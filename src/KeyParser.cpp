@@ -125,6 +125,35 @@ Keysym canonicaliseSym(Keysym sym) {
     return static_cast<Keysym>(xkb_keysym_to_lower(static_cast<xkb_keysym_t>(sym)));
 }
 
+bool modFromKeysym(Keysym sym, Mods& bit) {
+    bit = 0;
+    switch (sym) {
+        case XKB_KEY_Super_L:
+        case XKB_KEY_Super_R:
+        case XKB_KEY_Hyper_L:
+        case XKB_KEY_Hyper_R: bit = MOD_SUPER; return true;
+        case XKB_KEY_Alt_L:
+        case XKB_KEY_Alt_R:
+        case XKB_KEY_Meta_L:
+        case XKB_KEY_Meta_R: bit = MOD_ALT; return true;
+        case XKB_KEY_Control_L:
+        case XKB_KEY_Control_R: bit = MOD_CTRL; return true;
+        case XKB_KEY_Shift_L:
+        case XKB_KEY_Shift_R: bit = MOD_SHIFT; return true;
+        // Modifiers that exist at the XKB level but are not chord modifiers
+        // (AltGr, locks, group switch). They must still be treated as modifier
+        // events — pressing AltGr mid-sequence must not abort the chord — they
+        // just contribute no chord bit.
+        case XKB_KEY_ISO_Level3_Shift:
+        case XKB_KEY_ISO_Level5_Shift:
+        case XKB_KEY_Mode_switch:
+        case XKB_KEY_Caps_Lock:
+        case XKB_KEY_Shift_Lock:
+        case XKB_KEY_Num_Lock: return true;
+        default: return false;
+    }
+}
+
 Keysym resolveKeyName(const std::string& name) {
     xkb_keysym_t s = xkb_keysym_from_name(name.c_str(), XKB_KEYSYM_NO_FLAGS);
     if (s == XKB_KEY_NoSymbol)
@@ -135,6 +164,30 @@ Keysym resolveKeyName(const std::string& name) {
 }
 
 namespace {
+
+// Resolve a final-key token into `out` (mods already set): either a
+// Hyprland-style raw keycode ("code:NN", matched against the xkb keycode,
+// i.e. libinput code + 8) or a keysym name.
+bool resolveFinalKey(const std::string& token, Chord& out, std::string& err) {
+    if (token.starts_with("code:")) {
+        const std::string num = token.substr(5);
+        if (num.empty() || !std::ranges::all_of(num, [](unsigned char c) { return std::isdigit(c); })) {
+            err = "invalid keycode '" + token + "'";
+            return false;
+        }
+        out.code = static_cast<Keycode>(std::stoul(num));
+        out.sym  = 0;
+        return true;
+    }
+    const std::string keyName = normalizeKeyName(token);
+    out.sym                   = resolveKeyName(keyName);
+    out.code                  = 0;
+    if (out.sym == 0) {
+        err = "unknown key '" + token + "'";
+        return false;
+    }
+    return true;
+}
 
 // Parse one chord written in raw Hyprland syntax: "SUPER + SHIFT + F".
 bool parseRawChord(const std::string& chord, Chord& out, std::string& err) {
@@ -158,13 +211,11 @@ bool parseRawChord(const std::string& chord, Chord& out, std::string& err) {
         mods |= *m;
     }
 
-    const std::string keyName = normalizeKeyName(parts.back());
-    const Keysym      sym     = resolveKeyName(keyName);
-    if (sym == 0) {
-        err = "unknown key '" + parts.back() + "' in chord '" + chord + "'";
+    out = Chord{mods, 0, 0};
+    if (!resolveFinalKey(parts.back(), out, err)) {
+        err += " in chord '" + chord + "'";
         return false;
     }
-    out = Chord{mods, sym};
     return true;
 }
 
@@ -177,14 +228,8 @@ bool parseEmacsChord(const std::string& chord, Chord& out, std::string& err) {
     }
 
     auto asSingleKey = [&](const std::string& name) -> bool {
-        const std::string n   = normalizeKeyName(name);
-        const Keysym      sym = resolveKeyName(n);
-        if (sym == 0) {
-            err = "unknown key '" + name + "'";
-            return false;
-        }
-        out = Chord{0, sym};
-        return true;
+        out = Chord{0, 0, 0};
+        return resolveFinalKey(name, out, err);
     };
 
     if (parts.size() == 1)
@@ -202,13 +247,11 @@ bool parseEmacsChord(const std::string& chord, Chord& out, std::string& err) {
         mods |= *m;
     }
 
-    const std::string keyName = normalizeKeyName(parts.back());
-    const Keysym      sym     = resolveKeyName(keyName);
-    if (sym == 0) {
-        err = "unknown key '" + parts.back() + "' in chord '" + chord + "'";
+    out = Chord{mods, 0, 0};
+    if (!resolveFinalKey(parts.back(), out, err)) {
+        err += " in chord '" + chord + "'";
         return false;
     }
-    out = Chord{mods, sym};
     return true;
 }
 

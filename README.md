@@ -31,7 +31,7 @@ API and lives in your config.
 ### 1. Add the plugin with hyprpm
 
 ```sh
-hyprpm add file:///path/to/hyprmacs-keymap   # or a remote git URL
+hyprpm add https://codeberg.org/useless-utils/hyprmacs-keymap
 hyprpm enable hyprmacs-keymap
 hyprpm reload
 ```
@@ -97,6 +97,11 @@ A sequence is space-separated chords; within a chord, modifiers precede the key.
 
 * `s-c` = Super+C; `C-c` = Ctrl+C; `s` alone = the `s` key.
 * Raw Hyprland syntax with `+` is also accepted: `"SUPER + F"`.
+* Any xkbcommon keysym name works as the final key: `s-XF86AudioLowerVolume`,
+  `"SUPER + XF86AudioRaiseVolume"`, `M-print`, …
+* Raw keycodes work like in Hyprland: `code:NN` with the xkb keycode
+  (libinput code + 8, the number `wev`/`xev` report), e.g. `s-code:122`.
+  A keysym binding takes precedence over a keycode binding for the same key.
 * Aliases: `SPC`/`SPACE`→space, `RET`/`RETURN`→return, `ESC`/`ESCAPE`→escape.
 * Matching is case-insensitive (like Hyprland binds); use `S-` for Shift.
 * Modifier **order doesn't matter**: `s-M-x` and `M-s-x` are the same chord —
@@ -106,6 +111,12 @@ A sequence is space-separated chords; within a chord, modifiers precede the key.
   Hyprland's string-based bind matching; this plugin doesn't.)
 * Held modifiers are **not** carried into later chords: `s-x space` and
   `s-x s-space` are different bindings.
+* Modifiers are recognised by their **keysym**, so XKB-remapped modifiers work
+  (e.g. `kb_options = "caps:super"`). AltGr (`ISO_Level3_Shift`), Caps Lock and
+  Num Lock are modifier keys but carry no chord bit — pressing them never
+  starts or aborts a sequence.
+* Mouse buttons, `switch:` and `catchall` binds don't go through the keyboard
+  event stream and can't be chord steps — use a plain `bind()` for those.
 
 ## API
 
@@ -117,6 +128,10 @@ A sequence is space-separated chords; within a chord, modifiers precede the key.
 | `bind(keys, dispatcher, flags?)` | A plain (non-chord) Hyprland bind. |
 | `bind_exec(keys, command, flags?)` | A plain bind that runs a command. |
 | `enter_submap` / `reset_submap` / `bind_submap` | Thin wrappers over Hyprland submaps, kept for compatibility. |
+
+`flags.repeating = true` re-runs the final binding while its key is held, at
+the keyboard's repeat delay/rate — same as Hyprland's `repeating` bind flag.
+Like native repeats, any other key event stops the repeat.
 
 ## Configuration
 

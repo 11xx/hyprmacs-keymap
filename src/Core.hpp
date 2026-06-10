@@ -33,11 +33,23 @@ enum : Mods {
 // action closure; in the test harness it is just an arbitrary integer.
 using ActionId = int;
 
-// A single chord step: the modifiers held when the non-modifier key was pressed
-// plus that key's keysym.
+// An action bound to a final chord, plus its bind flags. `repeating` mirrors
+// Hyprland's bind flag of the same name: re-run while the key is held.
+struct Action {
+    ActionId id        = 0;
+    bool     repeating = false;
+};
+
+// A raw xkb keycode (libinput code + 8), for Hyprland-style "code:NN" binds.
+using Keycode = uint32_t;
+
+// A single chord step: the modifiers held when the non-modifier key was
+// pressed, plus that key — either by keysym (code == 0) or, for "code:NN"
+// binds, by raw keycode (sym == 0). Exactly one of sym/code is set.
 struct Chord {
-    Mods   mods = 0;
-    Keysym sym  = 0;
+    Mods    mods = 0;
+    Keysym  sym  = 0;
+    Keycode code = 0;
 
     bool operator==(const Chord&) const = default;
 };

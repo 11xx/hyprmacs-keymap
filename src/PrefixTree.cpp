@@ -3,17 +3,17 @@
 namespace hyprmacs {
 
 const Node* Node::child(const Chord& c) const {
-    auto it = children.find({c.mods, c.sym});
+    auto it = children.find({c.mods, c.sym, c.code});
     return it == children.end() ? nullptr : it->second.get();
 }
 
-InsertStatus PrefixTree::insert(const std::vector<Chord>& seq, ActionId action, bool strictDuplicates) {
+InsertStatus PrefixTree::insert(const std::vector<Chord>& seq, const Action& action, bool strictDuplicates) {
     if (seq.empty())
         return InsertStatus::ErrEmpty;
 
     Node* node = &m_root;
     for (size_t i = 0; i < seq.size(); ++i) {
-        const auto  key    = std::make_pair(seq[i].mods, seq[i].sym);
+        const auto  key    = std::make_tuple(seq[i].mods, seq[i].sym, seq[i].code);
         const bool  isLast = (i + 1 == seq.size());
         auto&       slot   = node->children[key];
 

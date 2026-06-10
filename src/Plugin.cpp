@@ -28,6 +28,7 @@
 
 #include <sys/stat.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdarg>
 #include <cstdint>
@@ -122,6 +123,42 @@ void runAction(ActionId ref) {
 }
 
 // ---------------------------------------------------------------------------
+// repeating binds (Hyprland's `repeating` flag)
+// ---------------------------------------------------------------------------
+// Mirrors CKeybindManager's native repeat: arm with the keyboard's repeat
+// delay on commit, re-fire at its repeat rate, and cancel on ANY subsequent
+// key event (native clears m_activeKeybinds at the top of every onKeyEvent).
+SP<CEventLoopTimer>   g_repeatTimer;
+std::vector<ActionId> g_repeatActions;
+int                   g_repeatIntervalMs = 25;
+
+void cancelRepeat() {
+    if (g_repeatTimer && g_pEventLoopManager) {
+        g_pEventLoopManager->removeTimer(g_repeatTimer);
+        g_repeatTimer.reset();
+    }
+    g_repeatActions.clear();
+}
+
+void armRepeat(std::vector<ActionId> actions, SP<IKeyboard> keyboard) {
+    if (actions.empty() || !g_pEventLoopManager)
+        return;
+    const int delay    = (keyboard && keyboard->m_repeatDelay > 0) ? keyboard->m_repeatDelay : 600;
+    const int rate     = (keyboard && keyboard->m_repeatRate > 0) ? keyboard->m_repeatRate : 25;
+    g_repeatActions    = std::move(actions);
+    g_repeatIntervalMs = std::max(1, 1000 / rate);
+    g_repeatTimer      = makeShared<CEventLoopTimer>(
+        std::chrono::milliseconds(delay),
+        [](SP<CEventLoopTimer> self, void*) {
+            for (ActionId a : g_repeatActions)
+                runAction(a);
+            self->updateTimeout(std::chrono::milliseconds(g_repeatIntervalMs));
+        },
+        nullptr);
+    g_pEventLoopManager->addTimer(g_repeatTimer);
+}
+
+// ---------------------------------------------------------------------------
 // optional prefix timeout
 // ---------------------------------------------------------------------------
 void cancelTimer() {
@@ -191,6 +228,7 @@ bool hkOnKeyEvent(void* thisptr, std::any event, SP<IKeyboard> keyboard) {
     if (!g_pCompositor->m_sessionActive || g_pCompositor->m_unsafeState || locked) {
         g_sm.reset();
         cancelTimer();
+        cancelRepeat();
         return passThrough();
     }
 
@@ -202,33 +240,49 @@ bool hkOnKeyEvent(void* thisptr, std::any event, SP<IKeyboard> keyboard) {
     const uint32_t KEYCODE = e.keycode + 8; // libinput -> xkb offset
     const bool     pressed = (e.state == WL_KEYBOARD_KEY_STATE_PRESSED);
 
-    // Classify as a modifier from the event itself (race-free) and feed the
-    // engine the whole key stream so it tracks held modifiers deterministically.
-    const Mods modBit = static_cast<Mods>(g_pKeybindManager->keycodeToModifier(KEYCODE)) & MOD_ALL;
-
+    // Resolve the unmodified keysym from the device's own keymap.
     Keysym sym = 0;
-    if (modBit == 0) {
-        xkb_state* st = keyboard->m_xkbSymState ? keyboard->m_xkbSymState : keyboard->m_xkbStaticState;
-        if (st)
-            sym = canonicaliseSym(static_cast<Keysym>(xkb_state_key_get_one_sym(st, KEYCODE)));
-    }
+    if (xkb_state* st = keyboard->m_xkbSymState ? keyboard->m_xkbSymState : keyboard->m_xkbStaticState)
+        sym = canonicaliseSym(static_cast<Keysym>(xkb_state_key_get_one_sym(st, KEYCODE)));
 
-    const StepResult r = g_sm.step(StepInput{sym, modBit, pressed});
+    // Classify as a modifier from the event itself (race-free). The keysym is
+    // authoritative — it follows XKB remaps (caps:super, AltGr on intl layouts)
+    // the same way Hyprland's own modmask does; fall back to the well-known
+    // modifier keycodes only when the keysym is unresolvable.
+    Mods modBit = 0;
+    bool isMod  = modFromKeysym(sym, modBit);
+    if (!isMod && sym == 0) {
+        modBit = static_cast<Mods>(g_pKeybindManager->keycodeToModifier(KEYCODE)) & MOD_ALL;
+        isMod  = modBit != 0;
+    }
+    if (isMod)
+        sym = 0;
+
+    // Any key event ends an in-progress bind repeat, matching native repeats.
+    cancelRepeat();
+
+    const StepResult r = g_sm.step(StepInput{sym, KEYCODE, modBit, isMod, pressed});
 
     // Log ONLY chord-relevant events: modifier keys, keys we capture/commit, or
     // keys while a prefix is in progress. Plain pass-through keystrokes (normal
     // typing, incl. shifted text) are never logged, so debug can't keylog.
-    if (g_cfg.debug && (modBit != 0 || r.suppress || !r.commits.empty() || g_sm.awaitingNextChord())) {
+    if (g_cfg.debug && (isMod || r.suppress || !r.commits.empty() || g_sm.awaitingNextChord())) {
         char name[64] = {0};
         if (sym)
             xkb_keysym_get_name(static_cast<xkb_keysym_t>(sym), name, sizeof(name));
         const Mods kbs = static_cast<Mods>(g_pInputManager->getModsFromAllKBs()) & MOD_ALL; // cross-check
-        dbg("%s sym=%s(0x%x) modBit=0x%x held=0x%x kbs=0x%x suppress=%d commits=%zu", pressed ? "down" : "up  ", sym ? name : "-", static_cast<unsigned>(sym),
+        dbg("%s sym=%s(0x%x) code=%u modBit=0x%x held=0x%x kbs=0x%x suppress=%d commits=%zu", pressed ? "down" : "up  ", sym ? name : "-", static_cast<unsigned>(sym), KEYCODE,
             static_cast<unsigned>(modBit), static_cast<unsigned>(g_sm.heldMods()), static_cast<unsigned>(kbs), static_cast<int>(r.suppress), r.commits.size());
     }
 
-    for (ActionId a : r.commits)
-        runAction(a);
+    std::vector<ActionId> repeats;
+    for (const Action& a : r.commits) {
+        runAction(a.id);
+        if (a.repeating)
+            repeats.push_back(a.id);
+    }
+    if (pressed)
+        armRepeat(std::move(repeats), keyboard);
 
     manageTimeout();
 
@@ -255,6 +309,7 @@ void clearRegistrations(lua_State* L) {
     g_tree.clear();
     g_sm.reset();
     cancelTimer();
+    cancelRepeat();
     g_cfg = Config{};
     stopDebugWarning(); // debug just reset to false; re-armed if config re-enables it
 }
@@ -267,6 +322,7 @@ void adoptState(lua_State* L) {
         g_tree.clear();
         g_sm.reset();
         cancelTimer();
+        cancelRepeat();
     }
     g_lua = L;
 }
@@ -285,10 +341,19 @@ int hm_register(lua_State* L) {
     if (!parsed.ok)
         return luaL_error(L, "hyprmacs-keymap.register: %s", parsed.error.c_str());
 
+    // optional flags table (argument 3); only `repeating` is meaningful here.
+    bool repeating = false;
+    if (lua_istable(L, 3)) {
+        lua_getfield(L, 3, "repeating");
+        if (lua_isboolean(L, -1))
+            repeating = lua_toboolean(L, -1);
+        lua_pop(L, 1);
+    }
+
     lua_pushvalue(L, 2);
     const int ref = luaL_ref(L, LUA_REGISTRYINDEX);
 
-    const InsertStatus status = g_tree.insert(parsed.chords, ref, g_cfg.strictDuplicates);
+    const InsertStatus status = g_tree.insert(parsed.chords, Action{ref, repeating}, g_cfg.strictDuplicates);
     switch (status) {
         case InsertStatus::OK: g_refs.push_back(ref); break;
         case InsertStatus::AddedDuplicate:
@@ -313,11 +378,12 @@ int hm_register(lua_State* L) {
     if (g_cfg.debug) {
         std::string chords;
         for (const auto& c : parsed.chords) {
-            char b[40];
-            std::snprintf(b, sizeof(b), "%s{mods=0x%x,sym=0x%x}", chords.empty() ? "" : " ", static_cast<unsigned>(c.mods), static_cast<unsigned>(c.sym));
+            char b[56];
+            std::snprintf(b, sizeof(b), "%s{mods=0x%x,sym=0x%x,code=%u}", chords.empty() ? "" : " ", static_cast<unsigned>(c.mods), static_cast<unsigned>(c.sym),
+                          static_cast<unsigned>(c.code));
             chords += b;
         }
-        dbg("register '%s' -> [%s] status=%d", seq.c_str(), chords.c_str(), static_cast<int>(status));
+        dbg("register '%s'%s -> [%s] status=%d", seq.c_str(), repeating ? " (repeating)" : "", chords.c_str(), static_cast<int>(status));
     }
 
     // Heads-up: Alt+Print is the magic-SysRq combo. When kernel.sysrq != 0 the
@@ -435,6 +501,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
 APICALL EXPORT void PLUGIN_EXIT() {
     cancelTimer();
+    cancelRepeat();
     stopDebugWarning();
     if (g_keyHook)
         g_keyHook->unhook();

@@ -8,16 +8,17 @@
 
 #include <map>
 #include <memory>
+#include <tuple>
 #include <vector>
 
 namespace hyprmacs {
 
 struct Node {
-    // children keyed by (mods, sym); std::map keeps this header dependency-free.
-    std::map<std::pair<Mods, Keysym>, std::unique_ptr<Node>> children;
+    // children keyed by (mods, sym, code); std::map keeps this header dependency-free.
+    std::map<std::tuple<Mods, Keysym, Keycode>, std::unique_ptr<Node>> children;
     // non-empty => this node is a final binding. Multiple entries model the
     // Org's "multiple commands on the same key" behaviour (run in order).
-    std::vector<ActionId> actions;
+    std::vector<Action> actions;
 
     bool        isLeaf() const { return !actions.empty(); }
     bool        isPrefix() const { return !children.empty(); }
@@ -39,7 +40,7 @@ class PrefixTree {
 
     // Insert a full chord sequence as a final binding for `action`.
     // `strictDuplicates` rejects duplicate finals instead of appending.
-    InsertStatus insert(const std::vector<Chord>& seq, ActionId action, bool strictDuplicates);
+    InsertStatus insert(const std::vector<Chord>& seq, const Action& action, bool strictDuplicates);
 
     void clear() { m_root = Node{}; }
 

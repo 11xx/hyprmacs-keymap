@@ -35,4 +35,12 @@ Keysym resolveKeyName(const std::string& name);
 // applies this to the pressed keysym so it matches the parsed, canonical tree.
 Keysym canonicaliseSym(Keysym sym);
 
+// Classify a keysym as a modifier. Returns true for any XKB modifier keysym
+// and sets `bit` to its chord bit — 0 for modifiers that exist at the XKB
+// level but are not chord modifiers (AltGr, Caps/Num Lock, group switch).
+// Keysym-level classification makes XKB-remapped modifiers (e.g. kb_options
+// "caps:super") and layout-specific ones (AltGr on br) behave like they do in
+// Hyprland's own bind matching, where keycode-based classification would not.
+bool modFromKeysym(Keysym sym, Mods& bit);
+
 } // namespace hyprmacs
