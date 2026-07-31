@@ -14,6 +14,8 @@
 
 #include <src/plugins/PluginAPI.hpp>
 #include <src/Compositor.hpp>
+#include <src/output/Monitor.hpp>
+#include <src/state/MonitorState.hpp>
 #include <src/devices/IKeyboard.hpp>
 #include <src/managers/KeybindManager.hpp>
 #include <src/managers/SessionLockManager.hpp>
@@ -29,6 +31,7 @@
 #include <sys/stat.h>
 
 #include <algorithm>
+#include <ranges>
 #include <chrono>
 #include <cstdarg>
 #include <cstdint>
@@ -224,8 +227,10 @@ bool hkOnKeyEvent(void* thisptr, std::any event, SP<IKeyboard> keyboard) {
         return passThrough();
 
     // Don't run chords while locked / inactive; keep the engine in sync.
+    // Unsafe state = every output is gone and only the fallback monitor remains.
     const bool locked = g_pSessionLockManager && g_pSessionLockManager->isSessionLocked();
-    if (!g_pCompositor->m_sessionActive || g_pCompositor->m_unsafeState || locked) {
+    const bool unsafe = std::ranges::any_of(State::monitorState()->monitors(), [](const auto& m) { return m->m_isUnsafeFallback; });
+    if (!g_pCompositor->m_sessionActive || unsafe || locked) {
         g_sm.reset();
         cancelTimer();
         cancelRepeat();
