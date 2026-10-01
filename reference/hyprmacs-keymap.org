@@ -15,7 +15,7 @@ Examples:
 
 #+begin_src lua :tangle no
 keymap_exec("s-x space", "$(tofi-run)")
-keymap_exec("s-x e e", "emacsclient-def")
+keymap_exec("s-x e e", "emacsclient -c")
 keymap_set("s-f s-f", hl.dsp.window.fullscreen({ mode = "maximized", action = "toggle" }))
 keymap_set("s-x s-c", hl.dsp.window.close())
 #+end_src
@@ -43,7 +43,7 @@ Hyprland config calls them directly from separate Lua modules.
 Key sequences are strings with space-separated chords:
 
 #+begin_src lua :tangle no
-keymap_exec("s-x e c", "emacsclient-code")
+keymap_exec("s-x e c", "code")
 #+end_src
 
 The Emacs-style modifier parser is case-sensitive:
@@ -139,7 +139,7 @@ on their parsed path.
 For example:
 
 #+begin_src lua :tangle no
-keymap_exec("s-x e e", "emacsclient-def")
+keymap_exec("s-x e e", "emacsclient -c")
 #+end_src
 
 creates this logical tree:
@@ -148,7 +148,7 @@ creates this logical tree:
 root
   SUPER + X -> submap keymap_SUPER_X
     E -> submap keymap_SUPER_X__E
-      E -> exec emacsclient-def
+      E -> exec emacsclient -c
 #+end_example
 
 Prefix binds call =bind_submap()=. Leaf binds call =bind_keymap_leaf()=.

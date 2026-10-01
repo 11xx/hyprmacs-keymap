@@ -1,4 +1,6 @@
--- Keybinds are part of hyprland.lua now.
+-- A real personal keybinds file, kept as a full usage example. The emacsclient-*,
+-- screenshot-jxl and shotdrag commands are the author's own scripts; substitute
+-- your own launchers.
 
 -- #### Binds ####
 -- See https://wiki.hyprland.org/Configuring/Keywords/ for more
