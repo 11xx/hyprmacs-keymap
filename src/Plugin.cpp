@@ -14,6 +14,9 @@
 
 #include <src/plugins/PluginAPI.hpp>
 #include <src/Compositor.hpp>
+#include <src/config/ConfigManager.hpp>
+#include <src/config/lua/ConfigManager.hpp>
+#include <src/event/EventBus.hpp>
 #include <src/output/Monitor.hpp>
 #include <src/state/MonitorState.hpp>
 #include <src/devices/IKeyboard.hpp>
@@ -52,13 +55,19 @@ CFunctionHook*    g_keyHook = nullptr;
 PrefixTree        g_tree;
 ChordStateMachine g_sm{&g_tree};
 
-// The config Lua state. Set on first register/clear; refreshed if it changes
-// (i.e. the config was reloaded into a new state).
+// The config Lua state the registrations belong to. Set by register/clear;
+// null from the start of every config reload (Hyprland closes the state then)
+// until the new config registers again.
 lua_State*        g_lua = nullptr;
 // Every action closure we hold a Lua registry ref for, so clear() can unref.
 std::vector<int>  g_refs;
+// Bumped whenever the registrations are dropped, so a commit or repeat in
+// flight stops running refs that no longer belong to the tree.
+uint64_t          g_regEpoch = 0;
 
-struct Config {
+CHyprSignalListener g_preReloadListener;
+
+struct Settings {
     int  timeoutMs        = 0;     // prefix timeout, 0 = off (matches the Org default)
     bool strictDuplicates = false; // reject duplicate final bindings
     bool reportDuplicates = false; // notify on (still-allowed) duplicate finals
@@ -114,15 +123,13 @@ int readSysrq() {
 // ---------------------------------------------------------------------------
 // action execution
 // ---------------------------------------------------------------------------
+// Run through Hyprland's own keybind-callback path: the live config state,
+// its watchdog (a runaway action is aborted instead of freezing the
+// compositor) and its runtime-error notification.
 void runAction(ActionId ref) {
-    if (!g_lua)
+    if (!g_lua || !Config::mgr() || Config::mgr()->type() != Config::CONFIG_LUA)
         return;
-    lua_rawgeti(g_lua, LUA_REGISTRYINDEX, ref);
-    if (lua_pcall(g_lua, 0, 0, 0) != 0) {
-        const char* err = lua_tostring(g_lua, -1);
-        logmsg(std::string("action error: ") + (err ? err : "?"));
-        lua_pop(g_lua, 1);
-    }
+    static_cast<Config::Lua::CConfigManager*>(Config::mgr().get())->callLuaFn(ref);
 }
 
 // ---------------------------------------------------------------------------
@@ -153,8 +160,13 @@ void armRepeat(std::vector<ActionId> actions, SP<IKeyboard> keyboard) {
     g_repeatTimer      = makeShared<CEventLoopTimer>(
         std::chrono::milliseconds(delay),
         [](SP<CEventLoopTimer> self, void*) {
-            for (ActionId a : g_repeatActions)
+            // An action can cancel this repeat (and its action list) itself.
+            const auto actions = g_repeatActions;
+            for (ActionId a : actions) {
                 runAction(a);
+                if (g_repeatTimer != self)
+                    return;
+            }
             self->updateTimeout(std::chrono::milliseconds(g_repeatIntervalMs));
         },
         nullptr);
@@ -284,13 +296,18 @@ bool hkOnKeyEvent(void* thisptr, std::any event, SP<IKeyboard> keyboard) {
             static_cast<unsigned>(modBit), static_cast<unsigned>(g_sm.heldMods()), static_cast<unsigned>(kbs), static_cast<int>(r.suppress), r.commits.size());
     }
 
+    // An action may drop every registration (e.g. by calling clear()); stop
+    // running this commit's remaining actions if one does.
+    const uint64_t        epoch = g_regEpoch;
     std::vector<ActionId> repeats;
     for (const Action& a : r.commits) {
+        if (g_regEpoch != epoch)
+            break;
         runAction(a.id);
         if (a.repeating)
             repeats.push_back(a.id);
     }
-    if (pressed)
+    if (pressed && g_regEpoch == epoch)
         armRepeat(std::move(repeats), keyboard);
 
     manageTimeout();
@@ -304,35 +321,47 @@ bool hkOnKeyEvent(void* thisptr, std::any event, SP<IKeyboard> keyboard) {
 // hl.plugin.hyprmacs_keymap.* lua bridge
 // ===========================================================================
 
-// Drop all registrations. If the lua state is unchanged, also unref closures.
-// Also reset config to defaults: settings are declared fresh each config
-// evaluation (the shim calls clear() at the top of every load), so e.g.
-// removing `keymap_configure({ debug = true })` actually turns debug back off —
-// otherwise the flag would persist in the still-loaded plugin across reloads.
-void clearRegistrations(lua_State* L) {
-    if (g_lua && g_lua == L) {
-        for (int ref : g_refs)
-            luaL_unref(L, LUA_REGISTRYINDEX, ref);
-    }
+// Drop every registration and its bookkeeping without touching Lua.
+void dropRegistrations() {
     g_refs.clear();
     g_tree.clear();
     g_sm.reset();
     cancelTimer();
     cancelRepeat();
-    g_cfg = Config{};
-    stopDebugWarning(); // debug just reset to false; re-armed if config re-enables it
+    ++g_regEpoch;
 }
 
-// If the config was reloaded into a fresh lua state, our refs belong to a gone
-// state; drop bookkeeping (without unref) and adopt the new state.
-void adoptState(lua_State* L) {
-    if (g_lua && g_lua != L) {
-        g_refs.clear();
-        g_tree.clear();
-        g_sm.reset();
-        cancelTimer();
-        cancelRepeat();
+// Settings are declared fresh by each config evaluation, so e.g. removing
+// `keymap_configure({ debug = true })` turns debug back off.
+void resetSettings() {
+    g_cfg = Settings{};
+    stopDebugWarning(); // re-armed if the config enables debug again
+}
+
+// A config reload closes the Lua state that holds every action closure, so
+// forget them (nothing to unref) along with the settings, whether or not the
+// new config registers anything.
+void onPreReload() {
+    dropRegistrations();
+    resetSettings();
+    g_lua = nullptr;
+}
+
+// clear(): unref our closures in the live state they belong to.
+void clearRegistrations(lua_State* L) {
+    if (g_lua && g_lua == L) {
+        for (int ref : g_refs)
+            luaL_unref(L, LUA_REGISTRYINDEX, ref);
     }
+    dropRegistrations();
+    resetSettings();
+}
+
+// Registrations made in another Lua state are not ours to unref here; drop
+// the bookkeeping and adopt the calling state.
+void adoptState(lua_State* L) {
+    if (g_lua && g_lua != L)
+        dropRegistrations();
     g_lua = L;
 }
 
@@ -500,6 +529,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         return {"hyprmacs-keymap", "Emacs-like keymap helper (FAILED to hook)", "11xx", "2026.6.9"};
     }
 
+    g_preReloadListener = Event::bus()->m_events.config.preReload.listen([] { onPreReload(); });
+
     HyprlandAPI::addLuaFunction(handle, "hyprmacs_keymap", "register", &hm_register);
     HyprlandAPI::addLuaFunction(handle, "hyprmacs_keymap", "configure", &hm_configure);
     HyprlandAPI::addLuaFunction(handle, "hyprmacs_keymap", "clear", &hm_clear);
@@ -509,6 +540,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+    g_preReloadListener.reset();
     cancelTimer();
     cancelRepeat();
     stopDebugWarning();
