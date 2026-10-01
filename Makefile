@@ -1,4 +1,4 @@
-# Hyprmacs — native Hyprland plugin (Hyprland 0.55.x)
+# Hyprmacs — native Hyprland plugin (Hyprland 0.56+)
 #
 #   make            build ./hyprmacs-keymap.so (default; this is what hyprpm runs)
 #   make test       build & run the standalone chord simulation (no Hyprland)
@@ -27,7 +27,7 @@ ifneq ($(strip $(HYPRLAND_SRC)),)
 INCLUDES += -I$(HYPRLAND_SRC) -I$(HYPRLAND_SRC)/protocols
 endif
 
-# Hyprland 0.55 embeds PUC Lua 5.5 (NOT LuaJIT). Build against the same Lua so
+# Hyprland embeds PUC Lua 5.5 (NOT LuaJIT). Build against the same Lua so
 # the plugin shares Hyprland's lua_State and registry index.
 LUA_CFLAGS := $(shell pkg-config --cflags lua 2>/dev/null || pkg-config --cflags lua5.5 2>/dev/null || pkg-config --cflags lua-5.5 2>/dev/null || pkg-config --cflags lua5.4 2>/dev/null)
 LUA_LIBS   := $(shell pkg-config --libs   lua 2>/dev/null || pkg-config --libs   lua5.5 2>/dev/null || pkg-config --libs   lua-5.5 2>/dev/null || pkg-config --libs   lua5.4 2>/dev/null)
