@@ -5,6 +5,8 @@
 //   * space-separated chords:           "s-x e e"
 //   * Emacs modifier prefixes (case-sensitive):
 //       s- = Super, C- = Ctrl, M- = Alt/Meta, S- = Shift
+//     everything after the last prefix is the key; "-" there means minus,
+//     so "C--" is Ctrl+minus
 //   * raw Hyprland syntax when a chord contains '+':  "SUPER + F"
 //   * final-key aliases: SPC/SPACE->space, RET/RETURN->return,
 //     ESC/ESCAPE->escape; single ASCII letters are matched case-insensitively.

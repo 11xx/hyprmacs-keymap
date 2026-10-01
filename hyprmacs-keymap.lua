@@ -121,8 +121,8 @@ function bind_exec(keys, cmd, flags)
 end
 
 -- ===========================================================================
--- legacy submap helpers — kept so older modules don't break. The chord engine
--- no longer uses submaps, but Hyprland's submap machinery still exists.
+-- Hyprland submap helpers, for modules that build their own submaps. The
+-- chord engine does not use submaps.
 -- ===========================================================================
 
 function reset_submap()
