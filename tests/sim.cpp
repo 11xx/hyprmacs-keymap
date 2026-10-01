@@ -52,11 +52,12 @@ struct Sim {
     }
 
     // event helpers. Modifier events are fed to the engine (isModifier) so it
-    // tracks held state from the stream, exactly like the plugin does. Key
-    // events carry a pseudo-keycode (the keysym value) so press/release
+    // tracks held state from the stream, exactly like the plugin does; each
+    // modifier gets its own pseudo-keycode (1000 + bit) unless one is given.
+    // Key events carry a pseudo-keycode (the keysym value) so press/release
     // tracking by keycode works like in the plugin.
-    void       modDown(Mods m) { feed({0, 0, m, true, true}); }
-    void       modUp(Mods m) { feed({0, 0, m, true, false}); }
+    void       modDown(Mods m, Keycode code = 0, uintptr_t dev = 0) { feed({0, code ? code : 1000 + m, m, true, true, dev}); }
+    void       modUp(Mods m, Keycode code = 0, uintptr_t dev = 0) { feed({0, code ? code : 1000 + m, m, true, false, dev}); }
     StepResult keyDown(const std::string& name) {
         const Keysym s = resolveKeyName(name);
         return feed({s, s, 0, false, true});
@@ -64,6 +65,22 @@ struct Sim {
     void keyUp(const std::string& name) {
         const Keysym s = resolveKeyName(name);
         feed({s, s, 0, false, false});
+    }
+    // the same key events through the engine's passive path (locked session)
+    StepResult passiveDown(const std::string& name) {
+        const Keysym s = resolveKeyName(name);
+        return passive({s, s, 0, false, true});
+    }
+    StepResult passiveUp(const std::string& name) {
+        const Keysym s = resolveKeyName(name);
+        return passive({s, s, 0, false, false});
+    }
+    StepResult passive(const StepInput& in) {
+        auto r       = sm.stepPassive(in);
+        lastSuppress = r.suppress;
+        for (const Action& a : r.commits)
+            committed.push_back(labels[a.id]);
+        return r;
     }
     void tap(const std::string& name) {
         keyDown(name);
@@ -421,6 +438,117 @@ int main() {
         expectBool("non-repeating binding commits with repeating=false", r2.commits.size() == 1 && !r2.commits[0].repeating, true);
         s.keyUp("a");
         s.modUp(MOD_SUPER);
+    }
+
+    // === held modifiers are tracked per physical key ========================
+    {
+        // Super_L and Super_R both down, Super_R released: Super still held
+        Sim s;
+        s.reg("s-a", "s-a");
+        s.rebuildEngine();
+        s.modDown(MOD_SUPER, 133);
+        s.modDown(MOD_SUPER, 134);
+        s.modUp(MOD_SUPER, 134);
+        s.tap("a");
+        s.modUp(MOD_SUPER, 133);
+        s.tap("a");
+        expectSeq("releasing one of two Super keys keeps Super held", s.committed, {"s-a"});
+        expectBool("plain a after both Supers released passes through", s.lastSuppress, false);
+    }
+    {
+        // two keyboards hold the same modifier keycode; one lets go
+        Sim s;
+        s.reg("s-a", "s-a");
+        s.rebuildEngine();
+        s.modDown(MOD_SUPER, 133, /*dev=*/1);
+        s.modDown(MOD_SUPER, 133, /*dev=*/2);
+        s.modUp(MOD_SUPER, 133, /*dev=*/2);
+        s.tap("a");
+        s.modUp(MOD_SUPER, 133, /*dev=*/1);
+        expectSeq("modifier held on another keyboard still counts", s.committed, {"s-a"});
+    }
+    {
+        // press order differs from release order
+        Sim s;
+        s.reg("s-M-a", "s-M-a");
+        s.reg("M-b", "M-b");
+        s.rebuildEngine();
+        s.modDown(MOD_SUPER);
+        s.modDown(MOD_ALT);
+        s.tap("a");
+        s.modUp(MOD_SUPER); // Super released first, Alt still down
+        s.tap("b");
+        s.modUp(MOD_ALT);
+        expectSeq("modifiers released out of press order", s.committed, {"s-M-a", "M-b"});
+    }
+
+    // === reset (config reload) keeps physical key state ======================
+    {
+        Sim s;
+        s.reg("s-a", "s-a");
+        s.reg("s-r", "reload");
+        s.rebuildEngine();
+        s.modDown(MOD_SUPER);
+        s.keyDown("r"); // commits; the action reloads the config
+        s.sm.reset();
+        s.keyUp("r");
+        expectBool("release of a swallowed key is swallowed across a reset", s.lastSuppress, true);
+        s.tap("a"); // Super still physically held
+        s.modUp(MOD_SUPER);
+        expectSeq("modifier held across a reset still counts", s.committed, {"reload", "s-a"});
+    }
+    {
+        Sim s;
+        s.reg("s-x f", "x-f");
+        s.rebuildEngine();
+        s.modDown(MOD_SUPER);
+        s.tap("x");
+        s.modUp(MOD_SUPER);
+        s.sm.reset();
+        expectBool("reset abandons a pending prefix", s.sm.awaitingNextChord(), false);
+        auto r = s.keyDown("f");
+        expectBool("key after a reset prefix passes through", r.suppress, false);
+        s.keyUp("f");
+        expectBool("its release passes through too", s.lastSuppress, false);
+        expectSeq("nothing fires after a reset prefix", s.committed, {});
+    }
+
+    // === a swallowed key whose release was lost ==============================
+    {
+        Sim s;
+        s.reg("s-r", "s-r");
+        s.rebuildEngine();
+        s.modDown(MOD_SUPER);
+        s.keyDown("r"); // swallowed; its release never arrives
+        s.modUp(MOD_SUPER);
+        auto r = s.keyDown("r"); // plain r: no binding
+        expectBool("re-press of a key with a lost release passes through", r.suppress, false);
+        s.keyUp("r");
+        expectBool("and its release passes through (no stuck key)", s.lastSuppress, false);
+    }
+
+    // === passive path (locked / inactive session, binds disabled) ===========
+    {
+        Sim s;
+        s.reg("s-a", "s-a");
+        s.reg("s-x f", "x-f");
+        s.rebuildEngine();
+        s.modDown(MOD_SUPER);
+        s.tap("x"); // prefix pending, x swallowed... and released
+        s.keyDown("x"); // abort, swallowed
+        auto p1 = s.passiveDown("q");
+        expectBool("passive press passes through", p1.suppress, false);
+        expectBool("passive press abandons the prefix", s.sm.awaitingNextChord(), false);
+        s.passiveUp("q");
+        expectBool("passive release of a passed key passes", s.lastSuppress, false);
+        s.passiveUp("x");
+        expectBool("passive release of a swallowed key is swallowed", s.lastSuppress, true);
+        s.passive({0, 1000 + MOD_SUPER, MOD_SUPER, true, false}); // Super up while locked
+        s.passive({0, 1000 + MOD_ALT, MOD_ALT, true, true});      // Alt down while locked
+        expectBool("passive path tracks modifiers", s.sm.heldMods() == MOD_ALT, true);
+        s.passive({0, 1000 + MOD_ALT, MOD_ALT, true, false});
+        s.tap("a");
+        expectSeq("passive path never commits; plain a after unlock does not match s-a", s.committed, {});
     }
 
     std::cout << "\n" << (g_checks - g_failures) << "/" << g_checks << " checks passed\n";

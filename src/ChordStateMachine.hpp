@@ -13,12 +13,17 @@
 // each modifier press/release in order), which is race-free — unlike the
 // compositor's async aggregate modifier mask, which can lag a just-pressed
 // modifier. This keeps it fully deterministic and testable without Hyprland.
+// Held modifiers are tracked per physical key, so a modifier bit stays set
+// while any key carrying it (left or right, on any keyboard) is still down.
 #pragma once
 
 #include "Core.hpp"
 #include "PrefixTree.hpp"
 
+#include <cstdint>
+#include <map>
 #include <set>
+#include <utility>
 #include <vector>
 
 namespace hyprmacs {
@@ -29,11 +34,12 @@ namespace hyprmacs {
 // with no chord bit (AltGr, locks), which update nothing but must not abort a
 // sequence in progress.
 struct StepInput {
-    Keysym  sym        = 0; // resolved + canonicalised keysym (0 if unresolvable)
-    Keycode code       = 0; // xkb keycode, for "code:NN" chords & release tracking
-    Mods    modBit     = 0;
-    bool    isModifier = false;
-    bool    pressed    = false;
+    Keysym    sym        = 0; // resolved + canonicalised keysym (0 if unresolvable)
+    Keycode   code       = 0; // xkb keycode, for "code:NN" chords & release tracking
+    Mods      modBit     = 0;
+    bool      isModifier = false;
+    bool      pressed    = false;
+    uintptr_t device     = 0; // identifies the source keyboard
 };
 
 struct StepResult {
@@ -47,11 +53,20 @@ class ChordStateMachine {
 
     StepResult step(const StepInput& in);
 
+    // For an event the engine must not act on (session inactive or locked, a
+    // keyboard with binds disabled): keep tracking modifiers, still swallow the
+    // release of a key whose press was swallowed, abandon any sequence on a
+    // press, and never commit.
+    StepResult stepPassive(const StepInput& in);
+
     // Fired by the host's prefix timeout. Resets to idle only if no chord
     // activity has happened since the timer was armed (generation guard).
     void timeoutReset(uint64_t armedGeneration);
 
-    // Drop all transient state (held mods, position, consumed keys). On reload.
+    // Abandon any sequence in progress (config reload, lock). Held modifiers
+    // and swallowed keys that are still down are physical state and survive,
+    // so a modifier held across a reload still counts and the release of a
+    // swallowed key is still swallowed.
     void reset();
 
     Mods     heldMods() const { return m_held; }
@@ -59,13 +74,17 @@ class ChordStateMachine {
     uint64_t generation() const { return m_gen; }
 
   private:
-    void gotoRoot(); // move to idle, bump generation
+    using KeyId = std::pair<uintptr_t, Keycode>; // (device, keycode)
 
-    const PrefixTree* m_tree;
-    const Node*       m_current;
-    Mods              m_held = 0;
-    std::set<Keycode> m_consumedDown; // keycodes of non-mod presses we suppressed
-    uint64_t          m_gen = 0;
+    void gotoRoot(); // move to idle, bump generation
+    void trackModifier(const StepInput& in);
+
+    const PrefixTree*     m_tree;
+    const Node*           m_current;
+    Mods                  m_held = 0;     // OR of m_heldModKeys
+    std::map<KeyId, Mods> m_heldModKeys;  // modifier keys down -> their chord bit
+    std::set<KeyId>       m_consumedDown; // non-mod keys down whose press we suppressed
+    uint64_t              m_gen = 0;
 };
 
 } // namespace hyprmacs
