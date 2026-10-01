@@ -226,17 +226,6 @@ bool hkOnKeyEvent(void* thisptr, std::any event, SP<IKeyboard> keyboard) {
     if (!keyboard)
         return passThrough();
 
-    // Don't run chords while locked / inactive; keep the engine in sync.
-    // Unsafe state = every output is gone and only the fallback monitor remains.
-    const bool locked = g_pSessionLockManager && g_pSessionLockManager->isSessionLocked();
-    const bool unsafe = std::ranges::any_of(State::monitorState()->monitors(), [](const auto& m) { return m->m_isUnsafeFallback; });
-    if (!g_pCompositor->m_sessionActive || unsafe || locked) {
-        g_sm.reset();
-        cancelTimer();
-        cancelRepeat();
-        return passThrough();
-    }
-
     IKeyboard::SKeyEvent e;
     try {
         e = std::any_cast<IKeyboard::SKeyEvent>(event);
@@ -245,9 +234,11 @@ bool hkOnKeyEvent(void* thisptr, std::any event, SP<IKeyboard> keyboard) {
     const uint32_t KEYCODE = e.keycode + 8; // libinput -> xkb offset
     const bool     pressed = (e.state == WL_KEYBOARD_KEY_STATE_PRESSED);
 
-    // Resolve the unmodified keysym from the device's own keymap.
+    // Resolve the unmodified keysym the way Hyprland's own binds do: from the
+    // first layout, or from the active layout when the device sets
+    // resolve_binds_by_sym.
     Keysym sym = 0;
-    if (xkb_state* st = keyboard->m_xkbSymState ? keyboard->m_xkbSymState : keyboard->m_xkbStaticState)
+    if (xkb_state* st = (keyboard->m_resolveBindsBySym && keyboard->m_xkbSymState) ? keyboard->m_xkbSymState : keyboard->m_xkbStaticState)
         sym = canonicaliseSym(static_cast<Keysym>(xkb_state_key_get_one_sym(st, KEYCODE)));
 
     // Classify as a modifier from the event itself (race-free). The keysym is
@@ -263,10 +254,23 @@ bool hkOnKeyEvent(void* thisptr, std::any event, SP<IKeyboard> keyboard) {
     if (isMod)
         sym = 0;
 
+    const StepInput in{sym, KEYCODE, modBit, isMod, pressed, reinterpret_cast<uintptr_t>(keyboard.get())};
+
     // Any key event ends an in-progress bind repeat, matching native repeats.
     cancelRepeat();
 
-    const StepResult r = g_sm.step(StepInput{sym, KEYCODE, modBit, isMod, pressed});
+    // No chords while locked, switched away, on the unsafe fallback monitor
+    // (every output gone), or from a keyboard with binds disabled. The engine
+    // still tracks modifiers and swallows releases of keys it swallowed.
+    const bool locked = g_pSessionLockManager && g_pSessionLockManager->isSessionLocked();
+    const bool unsafe = std::ranges::any_of(State::monitorState()->monitors(), [](const auto& m) { return m->m_isUnsafeFallback; });
+    if (!g_pCompositor->m_sessionActive || unsafe || locked || !keyboard->m_allowBinds) {
+        const StepResult r = g_sm.stepPassive(in);
+        manageTimeout();
+        return r.suppress ? false : passThrough();
+    }
+
+    const StepResult r = g_sm.step(in);
 
     // Log ONLY chord-relevant events: modifier keys, keys we capture/commit, or
     // keys while a prefix is in progress. Plain pass-through keystrokes (normal
