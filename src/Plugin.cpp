@@ -31,7 +31,9 @@
 
 #include <lua.hpp>
 
+#include <fcntl.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <ranges>
@@ -82,13 +84,19 @@ SP<CEventLoopTimer> g_debugWarnTimer;
 // file we (and the user) can actually read.
 constexpr const char* LOGFILE = "/tmp/hyprmacs-keymap.log";
 
+// /tmp is shared: create the file owner-only, never follow a symlink, and
+// refuse a file someone else planted there.
 void logfile(const std::string& s) {
-    if (FILE* f = std::fopen(LOGFILE, "a")) {
-        std::fputs(s.c_str(), f);
-        std::fputc('\n', f);
-        std::fclose(f);
-        ::chmod(LOGFILE, S_IRUSR | S_IWUSR); // owner-only; /tmp is world-readable
+    const int fd = ::open(LOGFILE, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_CLOEXEC, S_IRUSR | S_IWUSR);
+    if (fd < 0)
+        return;
+    struct stat st;
+    if (::fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_uid == ::geteuid()) {
+        ::fchmod(fd, S_IRUSR | S_IWUSR);
+        const std::string line = s + '\n';
+        [[maybe_unused]] const auto written = ::write(fd, line.data(), line.size()); // best effort
     }
+    ::close(fd);
 }
 
 void logmsg(const std::string& s) {
@@ -284,10 +292,11 @@ bool hkOnKeyEvent(void* thisptr, std::any event, SP<IKeyboard> keyboard) {
 
     const StepResult r = g_sm.step(in);
 
-    // Log ONLY chord-relevant events: modifier keys, keys we capture/commit, or
-    // keys while a prefix is in progress. Plain pass-through keystrokes (normal
-    // typing, incl. shifted text) are never logged, so debug can't keylog.
-    if (g_cfg.debug && (isMod || r.suppress || !r.commits.empty() || g_sm.awaitingNextChord())) {
+    // Log ONLY chord-relevant events: modifier keys and keys we capture or
+    // commit. Every press inside a sequence is captured; pass-through keys
+    // (normal typing, incl. shifted text, and the releases of typed keys) are
+    // never logged, so debug can't keylog.
+    if (g_cfg.debug && (isMod || r.suppress || !r.commits.empty())) {
         char name[64] = {0};
         if (sym)
             xkb_keysym_get_name(static_cast<xkb_keysym_t>(sym), name, sizeof(name));
