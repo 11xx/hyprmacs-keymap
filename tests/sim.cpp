@@ -401,6 +401,23 @@ int main() {
         expectBool("parser rejects code:abc", bad.ok, false);
     }
 
+    // === parser edge cases: minus key, bare modifier, keycode range =========
+    {
+        auto p = parseSequence("C-- C-M--");
+        expectBool("parser C-- is Ctrl+minus, C-M-- is Ctrl+Alt+minus",
+                   p.ok && p.chords.size() == 2 && p.chords[0].mods == MOD_CTRL && p.chords[0].sym == resolveKeyName("minus") &&
+                       p.chords[1].mods == (MOD_CTRL | MOD_ALT) && p.chords[1].sym == resolveKeyName("minus"),
+                   true);
+        auto bare = parseSequence("s-");
+        expectBool("parser rejects s- (modifier without a key)", bare.ok, false);
+        auto huge = parseSequence("code:99999999999999999999");
+        expectBool("parser rejects an out-of-range keycode", huge.ok, false);
+        auto zero = parseSequence("code:0");
+        expectBool("parser rejects code:0", zero.ok, false);
+        auto dash = parseSequence("s-foo-bar");
+        expectBool("parser rejects an unknown dashed key", dash.ok, false);
+    }
+
     // === modifier classification by keysym ==================================
     {
         Mods bit = 0;

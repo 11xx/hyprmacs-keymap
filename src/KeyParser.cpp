@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <optional>
 
 namespace hyprmacs {
@@ -170,12 +171,14 @@ namespace {
 // i.e. libinput code + 8) or a keysym name.
 bool resolveFinalKey(const std::string& token, Chord& out, std::string& err) {
     if (token.starts_with("code:")) {
-        const std::string num = token.substr(5);
-        if (num.empty() || !std::ranges::all_of(num, [](unsigned char c) { return std::isdigit(c); })) {
+        const std::string num  = token.substr(5);
+        Keycode           code = 0;
+        const auto [end, ec]   = std::from_chars(num.data(), num.data() + num.size(), code);
+        if (num.empty() || ec != std::errc{} || end != num.data() + num.size() || code == 0) {
             err = "invalid keycode '" + token + "'";
             return false;
         }
-        out.code = static_cast<Keycode>(std::stoul(num));
+        out.code = code;
         out.sym  = 0;
         return true;
     }
@@ -219,37 +222,28 @@ bool parseRawChord(const std::string& chord, Chord& out, std::string& err) {
     return true;
 }
 
-// Parse one chord written in Emacs syntax: "s-M-c".
+// Parse one chord written in Emacs syntax: "s-M-c". Leading "<mod>-" pairs
+// are modifiers and everything after them is the key, so "C--" is Ctrl+minus
+// and "s-" (no key) is an error rather than a plain "s".
 bool parseEmacsChord(const std::string& chord, Chord& out, std::string& err) {
-    auto parts = split(chord, '-', /*keepEmpty=*/false);
-    if (parts.empty()) {
-        err = "empty chord";
-        return false;
-    }
-
-    auto asSingleKey = [&](const std::string& name) -> bool {
-        out = Chord{0, 0, 0};
-        return resolveFinalKey(name, out, err);
-    };
-
-    if (parts.size() == 1)
-        return asSingleKey(parts[0]);
-
-    Mods mods = 0;
-    for (size_t i = 0; i + 1 < parts.size(); ++i) {
-        auto m = emacsMod(parts[i]);
-        if (!m) {
-            // Not an Emacs chord after all (e.g. a bare key name that happens to
-            // contain '-'); treat the whole token as a single key name, matching
-            // the Org parser's `return chord` fallback.
-            return asSingleKey(chord);
-        }
+    Mods   mods = 0;
+    size_t pos  = 0;
+    while (pos + 2 < chord.size() && chord[pos + 1] == '-') {
+        const auto m = emacsMod(chord.substr(pos, 1));
+        if (!m)
+            break;
         mods |= *m;
+        pos += 2;
     }
+
+    std::string key = chord.substr(pos);
+    if (key == "-")
+        key = "minus";
 
     out = Chord{mods, 0, 0};
-    if (!resolveFinalKey(parts.back(), out, err)) {
-        err += " in chord '" + chord + "'";
+    if (!resolveFinalKey(key, out, err)) {
+        if (mods)
+            err += " in chord '" + chord + "'";
         return false;
     }
     return true;
