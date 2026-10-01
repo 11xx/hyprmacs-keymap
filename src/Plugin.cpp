@@ -38,6 +38,7 @@
 #include <algorithm>
 #include <ranges>
 #include <chrono>
+#include <climits>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
@@ -465,9 +466,10 @@ int hm_configure(lua_State* L) {
         return luaL_error(L, "hyprmacs-keymap.configure: argument 1 must be a table");
 
     lua_getfield(L, 1, "submap_timeout_ms");
-    if (lua_isnumber(L, -1))
-        g_cfg.timeoutMs = static_cast<int>(lua_tointeger(L, -1));
-    else if (lua_isnil(L, -1) && lua_gettop(L) >= 1) { /* leave default */ }
+    if (lua_isnumber(L, -1)) {
+        const lua_Number ms = lua_tonumber(L, -1); // a float or negative must not wrap or vanish
+        g_cfg.timeoutMs     = ms > 0 ? static_cast<int>(std::min<lua_Number>(ms, INT_MAX)) : 0;
+    }
     lua_pop(L, 1);
 
     lua_getfield(L, 1, "strict_duplicates");
@@ -492,8 +494,8 @@ int hm_configure(lua_State* L) {
     } else
         stopDebugWarning();
 
-    // modified_leaf_commit_delay_ms is accepted for backward compatibility but
-    // ignored: matching is eager now (a final binding fires on key-down).
+    // Other keys, such as modified_leaf_commit_delay_ms, are ignored: a final
+    // binding always fires on key-down.
     return 0;
 }
 
