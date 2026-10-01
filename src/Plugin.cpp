@@ -41,6 +41,7 @@
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -514,9 +515,15 @@ APICALL EXPORT std::string PLUGIN_API_VERSION() {
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     PHANDLE = handle;
 
+    // The hook reads Hyprland structs (keyboards, monitors) by layout, so a
+    // build from other headers would misread them on every key press. Refuse
+    // to load; Hyprland unloads a plugin whose init throws.
     const SVersionInfo ver = HyprlandAPI::getHyprlandVersion(handle);
-    if (ver.hash != GIT_COMMIT_HASH)
-        HyprlandAPI::addNotification(handle, "[hyprmacs-keymap] built against a different Hyprland commit; rebuild if chords misbehave", CHyprColor(0.9f, 0.5f, 0.1f, 1.0f), 7000);
+    if (ver.hash != GIT_COMMIT_HASH) {
+        HyprlandAPI::addNotification(handle, "[hyprmacs-keymap] built against a different Hyprland commit; rebuild it (hyprpm update). Not loaded.",
+                                     CHyprColor(0.9f, 0.2f, 0.2f, 1.0f), 10000);
+        throw std::runtime_error("[hyprmacs-keymap] Hyprland version mismatch");
+    }
 
     // Locate and hook CKeybindManager::onKeyEvent.
     void*      addr = nullptr;
